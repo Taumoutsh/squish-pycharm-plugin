@@ -1,0 +1,41 @@
+<idea-plugin>
+    <id>com.pysquish.plugin</id>
+    <name>PySquish</name>
+    <vendor email="sinan.thomas@gmail.com">PySquish</vendor>
+
+    <description><![CDATA[
+        <p>Run <b>Squish</b> GUI tests written in Python directly from PyCharm.</p>
+        <ul>
+            <li>Discovers Squish test suites and test cases in the opened project.</li>
+            <li>Pick a suite from a combo box and run any test case with a single click.</li>
+            <li>Streams <code>squishrunner</code> output into a dedicated log console.</li>
+            <li>Optionally attaches the PyCharm Python debugger to the running test
+                (remote <code>pydevd</code> attach) so breakpoints in test scripts are honored.</li>
+        </ul>
+    ]]></description>
+
+    <!-- Requires the Python module: works in PyCharm (and IDEs with the Python plugin). -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.python</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Application-level persisted settings -->
+        <applicationService serviceImplementation="com.pysquish.settings.SquishSettings"/>
+
+        <!-- Settings UI under Settings | Tools | PySquish -->
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.pysquish.settings.SquishSettingsConfigurable"
+                id="com.pysquish.settings.SquishSettingsConfigurable"
+                displayName="PySquish"/>
+
+        <!-- Tool window: suite picker + test buttons + log console -->
+        <toolWindow
+                id="PySquish"
+                anchor="bottom"
+                factoryClass="com.pysquish.toolwindow.SquishToolWindowFactory"
+                icon="com.pysquish.icons.SquishIcons.TOOL_WINDOW"/>
+
+        <notificationGroup id="PySquish" displayType="BALLOON"/>
+    </extensions>
+</idea-plugin>
