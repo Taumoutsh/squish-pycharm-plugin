@@ -41,7 +41,7 @@ object SquishDebugSupport {
         val host = settings.debugHost?.takeIf { it.isNotBlank() } ?: "127.0.0.1"
         val port = settings.debugPort
 
-        startDebugServer(project, console, port)
+        startDebugServer(project, console, host, port)
 
         val bootstrapDir = writeBootstrap(host, port)
         val pythonPath = buildList {
@@ -75,7 +75,7 @@ object SquishDebugSupport {
      * connects. Best-effort: if the configuration type cannot be found or started,
      * prints manual instructions and continues.
      */
-    private fun startDebugServer(project: Project, console: ConsoleView, port: Int) {
+    private fun startDebugServer(project: Project, console: ConsoleView, host: String, port: Int) {
         val type = findRemoteDebugType()
         if (type == null) {
             printManualServerHelp(console, port)
@@ -87,7 +87,7 @@ object SquishDebugSupport {
             }
             val runManager = RunManager.getInstance(project)
             val settings = runManager.createConfiguration("PySquish Debug Server", factory)
-            applyPort(settings.configuration, port)
+            applyHostAndPort(settings.configuration, host, port)
 
             ApplicationManager.getApplication().invokeLater {
                 runCatching {
@@ -113,26 +113,36 @@ object SquishDebugSupport {
         }
 
     /** Sets host/port on a PyRemoteDebugConfiguration via reflection (field names vary by version). */
-    private fun applyPort(configuration: Any, port: Int) {
+    private fun applyHostAndPort(configuration: Any, host: String, port: Int) {
         val cls = configuration.javaClass
-        // Try setter methods first.
-        for (name in listOf("setPort")) {
-            runCatching { cls.getMethod(name, Int::class.javaPrimitiveType).invoke(configuration, port); return }
-            runCatching { cls.getMethod(name, String::class.java).invoke(configuration, port.toString()); return }
-        }
-        // Fall back to public fields PORT / port.
-        for (field in listOf("PORT", "port")) {
-            runCatching {
-                val f = cls.getField(field)
-                if (f.type == Int::class.javaPrimitiveType || f.type == Integer::class.java) {
-                    f.setInt(configuration, port)
-                } else {
-                    f.set(configuration, port.toString())
-                }
-                return
+
+        // --- port ---
+        var portSet = false
+        runCatching { cls.getMethod("setPort", Int::class.javaPrimitiveType).invoke(configuration, port); portSet = true }
+        if (!portSet) runCatching { cls.getMethod("setPort", String::class.java).invoke(configuration, port.toString()); portSet = true }
+        if (!portSet) {
+            for (field in listOf("PORT", "port")) {
+                val done = runCatching {
+                    val f = cls.getField(field)
+                    if (f.type == Int::class.javaPrimitiveType || f.type == Integer::class.java) f.setInt(configuration, port)
+                    else f.set(configuration, port.toString())
+                    true
+                }.getOrDefault(false)
+                if (done) { portSet = true; break }
             }
         }
-        LOG.info("Could not set port on ${cls.name}; using its default. Configure it manually if needed.")
+        if (!portSet) LOG.info("Could not set port on ${cls.name}; using its default.")
+
+        // --- host ---
+        var hostSet = false
+        runCatching { cls.getMethod("setHost", String::class.java).invoke(configuration, host); hostSet = true }
+        if (!hostSet) {
+            for (field in listOf("HOST", "host")) {
+                val done = runCatching { cls.getField(field).set(configuration, host); true }.getOrDefault(false)
+                if (done) { hostSet = true; break }
+            }
+        }
+        if (!hostSet) LOG.info("Could not set host on ${cls.name}; PyCharm will show its default.")
     }
 
     private fun printManualServerHelp(console: ConsoleView, port: Int) {
@@ -150,17 +160,34 @@ object SquishDebugSupport {
 
         val attachModule = """
             import os
+            import time
 
             def attach(host=None, port=None, suspend=False):
                 host = host or os.environ.get("PYSQUISH_DEBUG_HOST", "$host")
                 port = int(port or os.environ.get("PYSQUISH_DEBUG_PORT", "$port"))
+                # Give PyCharm's debug server a moment to start listening; the
+                # plugin launches it almost in parallel with the test process.
+                # We do NOT probe the port: a pydevd server accepts a single
+                # connection, so a probe-connect would consume and drop it.
+                delay = float(os.environ.get("PYSQUISH_DEBUG_WAIT", "2.0"))
+                if delay > 0:
+                    time.sleep(delay)
                 try:
                     import pydevd_pycharm
-                    pydevd_pycharm.settrace(
-                        host, port=port,
-                        stdoutToServer=True, stderrToServer=True,
-                        suspend=suspend,
-                    )
+                    # Newer pydevd uses snake_case kwargs (stdout_to_server);
+                    # older builds use camelCase (stdoutToServer). Try both.
+                    try:
+                        pydevd_pycharm.settrace(
+                            host, port=port,
+                            stdout_to_server=True, stderr_to_server=True,
+                            suspend=suspend,
+                        )
+                    except TypeError:
+                        pydevd_pycharm.settrace(
+                            host, port=port,
+                            stdoutToServer=True, stderrToServer=True,
+                            suspend=suspend,
+                        )
                     return True
                 except Exception as exc:  # noqa: BLE001
                     print("[PySquish] could not attach debugger:", exc)
