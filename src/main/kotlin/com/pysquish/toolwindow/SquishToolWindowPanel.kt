@@ -70,16 +70,11 @@ class SquishToolWindowPanel(private val project: Project) :
     private val statusLabel = JBLabel("No suites loaded. Click Refresh.")
     private val runButtons = mutableListOf<JButton>()
 
-    private val addSuiteButton = JButton("+ Add a suite…").apply {
-        toolTipText = "Create a new Squish test suite from a template"
-        isFocusable = false
-        addActionListener { onAddSuite() }
-    }
-    private val addTestButton = JButton("+ Add a test…").apply {
-        toolTipText = "Add a new test case to the selected suite"
-        isFocusable = false
-        addActionListener { onAddTest() }
-    }
+    // Compact icon-only creation buttons (folder+ for a suite, file+ for a test).
+    private val addSuiteButton =
+        compactButton(AllIcons.Actions.NewFolder, "Add a suite… (new suite_<name> folder)") { onAddSuite() }
+    private val addTestButton =
+        compactButton(AllIcons.Actions.AddFile, "Add a test… (new tst_<name> in the selected suite)") { onAddTest() }
 
     /** Whether each test's checkbox is ticked, keyed by test directory (default true). */
     private val checkedState = HashMap<Path, Boolean>()
@@ -172,17 +167,19 @@ class SquishToolWindowPanel(private val project: Project) :
             val top = JPanel(BorderLayout(6, 6))
             top.add(JBLabel("Suite:"), BorderLayout.WEST)
             top.add(suiteCombo, BorderLayout.CENTER)
-            top.add(addSuiteButton, BorderLayout.EAST)
+            val addButtons = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
+                isOpaque = false
+                add(addSuiteButton)
+                add(addTestButton)
+            }
+            top.add(addButtons, BorderLayout.EAST)
             add(top, BorderLayout.NORTH)
 
             val scroll = JBScrollPane(testListPanel)
             scroll.border = JBUI.Borders.emptyTop(6)
             add(scroll, BorderLayout.CENTER)
 
-            val south = JPanel(BorderLayout(6, 0)).apply { border = JBUI.Borders.emptyTop(6) }
-            south.add(addTestButton, BorderLayout.WEST)
-            south.add(statusLabel, BorderLayout.CENTER)
-            add(south, BorderLayout.SOUTH)
+            add(statusLabel.apply { border = JBUI.Borders.emptyTop(6) }, BorderLayout.SOUTH)
             preferredSize = Dimension(320, preferredSize.height)
         }
 
