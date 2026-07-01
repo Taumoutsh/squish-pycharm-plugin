@@ -6,6 +6,7 @@ import com.intellij.execution.executors.DefaultDebugExecutor
 import com.intellij.execution.runners.ExecutionUtil
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.ConsoleViewContentType
+import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.diagnostic.logger
@@ -33,6 +34,9 @@ import kotlin.io.path.isDirectory
 object SquishDebugSupport {
 
     private val LOG = logger<SquishDebugSupport>()
+
+    /** Display name of the Python Debug Server run content PySquish starts. */
+    private const val DEBUG_SERVER_NAME = "PySquish Debug Server"
 
     data class Setup(val environment: Map<String, String>, val pythonPath: List<String>)
 
@@ -86,7 +90,7 @@ object SquishDebugSupport {
                 printManualServerHelp(console, port); return
             }
             val runManager = RunManager.getInstance(project)
-            val settings = runManager.createConfiguration("PySquish Debug Server", factory)
+            val settings = runManager.createConfiguration(DEBUG_SERVER_NAME, factory)
             applyHostAndPort(settings.configuration, host, port)
 
             ApplicationManager.getApplication().invokeLater {
@@ -104,6 +108,26 @@ object SquishDebugSupport {
         } catch (e: Exception) {
             LOG.info("Could not auto-start Python Debug Server", e)
             printManualServerHelp(console, port)
+        }
+    }
+
+    /**
+     * Stops the Python Debug Server PySquish started (matched by display name)
+     * and removes its run content. Called when the Squish run finishes so the
+     * debugger doesn't linger. Safe to call when none is running.
+     */
+    fun stopDebugServer(project: Project) {
+        ApplicationManager.getApplication().invokeLater {
+            runCatching {
+                val manager = RunContentManager.getInstance(project)
+                val executor = DefaultDebugExecutor.getDebugExecutorInstance()
+                manager.allDescriptors
+                    .filter { it.displayName == DEBUG_SERVER_NAME }
+                    .forEach { descriptor ->
+                        descriptor.processHandler?.let { if (!it.isProcessTerminated) it.destroyProcess() }
+                        runCatching { manager.removeRunContent(executor, descriptor) }
+                    }
+            }.onFailure { LOG.info("Could not stop Python Debug Server", it) }
         }
     }
 

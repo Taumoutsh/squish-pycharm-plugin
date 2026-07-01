@@ -5,7 +5,6 @@ import com.intellij.execution.process.OSProcessHandler
 import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
-import com.intellij.execution.process.ProcessTerminatedListener
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.openapi.application.ApplicationManager
@@ -14,6 +13,10 @@ import com.intellij.openapi.project.Project
 import com.pysquish.debug.SquishDebugSupport
 import com.pysquish.model.SquishSuite
 import com.pysquish.model.SquishTest
+import com.pysquish.report.SquishRunReport
+import com.pysquish.report.SquishXmlReportParser
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -31,10 +34,19 @@ class SquishTestRunner(
     private val activeRunner = AtomicReference<ProcessHandler?>(null)
     private val activeServer = AtomicReference<ProcessHandler?>(null)
 
+    @Volatile
+    private var debugActive = false
+
+    @Volatile
+    private var reportDir: Path? = null
+
     val isRunning: Boolean get() = activeRunner.get()?.let { !it.isProcessTerminated } == true
 
     /** Listener notified when a run starts/finishes so the UI can toggle buttons. */
     var stateListener: ((running: Boolean) -> Unit)? = null
+
+    /** Notified with the parsed report (or null) after a run finishes. */
+    var reportListener: ((SquishRunReport?) -> Unit)? = null
 
     fun run(suite: SquishSuite, test: SquishTest?, debug: Boolean) {
         if (isRunning) {
@@ -44,6 +56,7 @@ class SquishTestRunner(
 
         console.clear()
         notifyState(true)
+        debugActive = debug
 
         try {
             val debugEnv: Map<String, String>
@@ -57,9 +70,12 @@ class SquishTestRunner(
                 extraPythonPath = emptyList()
             }
 
+            val dir = runCatching { Files.createTempDirectory("pysquish-report") }.getOrNull()
+            reportDir = dir
+
             maybeStartServer()
 
-            val command = SquishCommandBuilder.runnerCommand(suite, test, debugEnv, extraPythonPath)
+            val command = SquishCommandBuilder.runnerCommand(suite, test, debugEnv, extraPythonPath, dir)
             printCommand(command, debug)
             startRunner(command)
         } catch (e: SquishCommandBuilder.ConfigurationException) {
@@ -92,17 +108,37 @@ class SquishTestRunner(
 
     private fun startRunner(command: GeneralCommandLine) {
         val handler = OSProcessHandler(command)
-        ProcessTerminatedListener.attach(handler, project, "Squish runner finished with exit code \$EXIT_CODE\$\n")
+        // Colorized, line-buffered printing instead of a raw attach.
+        handler.addProcessListener(SquishConsolePrinter(console))
         handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
+                console.print(
+                    "\nSquish runner finished with exit code ${event.exitCode}\n",
+                    ConsoleViewContentType.SYSTEM_OUTPUT,
+                )
                 stopServer()
+                if (debugActive) SquishDebugSupport.stopDebugServer(project)
+
+                val report = reportDir?.let { SquishXmlReportParser.parse(it) }
+                cleanupReportDir()
+                ApplicationManager.getApplication().invokeLater { reportListener?.invoke(report) }
+
                 activeRunner.set(null)
                 notifyState(false)
             }
         })
         activeRunner.set(handler)
-        console.attachToProcess(handler)
         handler.startNotify()
+    }
+
+    private fun cleanupReportDir() {
+        val dir = reportDir ?: return
+        reportDir = null
+        runCatching {
+            Files.walk(dir).use { stream ->
+                stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+            }
+        }
     }
 
     private fun stopServer() {

@@ -4,6 +4,7 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.pysquish.model.SquishSuite
 import com.pysquish.model.SquishTest
 import com.pysquish.settings.SquishSettings
+import java.nio.file.Path
 
 /**
  * Builds [GeneralCommandLine]s for squishrunner / squishserver from the current
@@ -17,11 +18,15 @@ object SquishCommandBuilder {
      * @param debugEnv extra environment variables (e.g. for remote debugging) and
      *                 PYTHONPATH entries that should be merged into the process.
      */
+    /** Squish report generator used to feed the structured Report tab. */
+    const val REPORT_FORMAT = "xml3.5"
+
     fun runnerCommand(
         suite: SquishSuite,
         test: SquishTest?,
         debugEnv: Map<String, String> = emptyMap(),
         extraPythonPath: List<String> = emptyList(),
+        reportDir: Path? = null,
     ): GeneralCommandLine {
         val settings = SquishSettings.state()
         val runner = settings.squishRunnerPath?.trim().orEmpty()
@@ -55,6 +60,13 @@ object SquishCommandBuilder {
         }
 
         parseArgs(settings.extraRunnerArgs).forEach { cmd.addParameter(it) }
+
+        // Structured report for the Report tab / per-test verdicts. Added last so
+        // it never interferes with the user's own --reportgen (e.g. stdout).
+        if (reportDir != null) {
+            cmd.addParameter("--reportgen")
+            cmd.addParameter("$REPORT_FORMAT,$reportDir")
+        }
 
         applyEnvironment(cmd, debugEnv, extraPythonPath)
         return cmd

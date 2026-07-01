@@ -20,11 +20,16 @@ import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.intellij.ui.components.JBTabbedPane
 import com.pysquish.execution.SquishTestRunner
 import com.pysquish.model.SquishProjectScanner
 import com.pysquish.model.SquishSuite
+import com.pysquish.report.SquishRunReport
+import com.pysquish.report.SquishVerdict
 import com.pysquish.settings.SquishSettingsConfigurable
 import java.awt.BorderLayout
+import java.nio.file.Path
+import javax.swing.Icon
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
@@ -46,10 +51,16 @@ class SquishToolWindowPanel(private val project: Project) :
 
     private val runner = SquishTestRunner(project, console)
 
+    private val reportPanel = SquishReportPanel()
+
     private val suiteCombo = JComboBox<SquishSuite>()
     private val testListPanel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
     private val statusLabel = JBLabel("No suites loaded. Click Refresh.")
     private val runButtons = mutableListOf<JButton>()
+
+    /** Last verdict per test, keyed by test directory. Session-only. */
+    private val verdicts = HashMap<Path, SquishVerdict>()
+    private var lastRunSuite: SquishSuite? = null
 
     @Volatile
     private var running = false
@@ -61,6 +72,7 @@ class SquishToolWindowPanel(private val project: Project) :
             running = isRunning
             updateControlsEnabled()
         }
+        runner.reportListener = { report -> onReport(report) }
 
         suiteCombo.addActionListener { rebuildTestList() }
         suiteCombo.renderer = SuiteRenderer()
@@ -120,11 +132,40 @@ class SquishToolWindowPanel(private val project: Project) :
             preferredSize = Dimension(320, preferredSize.height)
         }
 
+        val tabs = JBTabbedPane().apply {
+            addTab("Console", console.component)
+            addTab("Report", reportPanel.component())
+        }
+
         val splitter = JBSplitter(false, "pysquish.splitter", 0.35f)
         splitter.firstComponent = left
-        splitter.secondComponent = console.component
+        splitter.secondComponent = tabs
 
         return JPanel(BorderLayout()).apply { add(splitter, BorderLayout.CENTER) }
+    }
+
+    /** Starts a run and remembers the suite so we can map report verdicts back. */
+    private fun launch(suite: SquishSuite, test: com.pysquish.model.SquishTest?, debug: Boolean) {
+        lastRunSuite = suite
+        runner.run(suite, test, debug)
+    }
+
+    private fun onReport(report: SquishRunReport?) {
+        if (report != null) {
+            val suite = lastRunSuite
+            report.tests.forEach { tr ->
+                val test = suite?.tests?.firstOrNull { it.name == tr.name }
+                if (test != null) verdicts[test.directory] = tr.verdict
+            }
+        }
+        reportPanel.setReport(report)
+        rebuildTestList()
+    }
+
+    private fun statusIcon(test: com.pysquish.model.SquishTest): Icon? = when (verdicts[test.directory]) {
+        SquishVerdict.PASS -> AllIcons.RunConfigurations.TestPassed
+        SquishVerdict.FAIL -> AllIcons.RunConfigurations.TestFailed
+        else -> null
     }
 
     private fun loadSuites() {
@@ -178,7 +219,12 @@ class SquishToolWindowPanel(private val project: Project) :
             }
 
             val name = JBLabel(test.name).apply {
-                toolTipText = test.scriptFile?.toString() ?: "No test script found"
+                icon = statusIcon(test)
+                toolTipText = when (verdicts[test.directory]) {
+                    SquishVerdict.PASS -> "Last result: OK"
+                    SquishVerdict.FAIL -> "Last result: KO"
+                    else -> test.scriptFile?.toString() ?: "No test script found"
+                }
                 if (test.scriptFile == null) foreground = JBUI.CurrentTheme.Label.disabledForeground()
             }
             row.add(name, BorderLayout.CENTER)
@@ -186,11 +232,11 @@ class SquishToolWindowPanel(private val project: Project) :
             val buttons = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
             val runBtn = JButton("Run", AllIcons.Actions.Execute).apply {
                 toolTipText = "Run ${test.name}"
-                addActionListener { runner.run(suite, test, debug = false) }
+                addActionListener { launch(suite, test, debug = false) }
             }
             val debugBtn = JButton("Debug", AllIcons.Actions.StartDebugger).apply {
                 toolTipText = "Run ${test.name} with the PyCharm debugger attached"
-                addActionListener { runner.run(suite, test, debug = true) }
+                addActionListener { launch(suite, test, debug = true) }
             }
             runButtons.add(runBtn)
             runButtons.add(debugBtn)
@@ -210,7 +256,7 @@ class SquishToolWindowPanel(private val project: Project) :
 
     private fun runSelectedSuite(debug: Boolean) {
         val suite = selectedSuite() ?: return
-        runner.run(suite, null, debug)
+        launch(suite, null, debug)
     }
 
     private fun selectedSuite(): SquishSuite? = suiteCombo.selectedItem as? SquishSuite

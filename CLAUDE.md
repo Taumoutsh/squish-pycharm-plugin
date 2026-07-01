@@ -8,16 +8,28 @@ Python debugger to the running test so breakpoints are honored.
 
 ## Status
 
-v0.1.1 — feature-complete for the original brief. **Not yet compiled on this
-machine** (no JDK/Gradle was available when it was generated). Build it once in a
-JetBrains IDE or with `./gradlew buildPlugin`; expect to fix at most minor
-platform-API drift for the exact PyCharm build you target. The debugger
-auto-start and `pydevd` auto-attach are best-effort — see *Debugging* below.
+v0.2.0 — adds per-test result badges, a colored console, a structured **Report**
+tab (parsed from the Squish `xml3.5` report), and automatic teardown of the
+Python Debug Server when a run ends. Builds with `./gradlew buildPlugin`. The
+console coloring and XML report parsing are **format-driven** — the level
+keywords and the `xml3.5` element handling are isolated (see
+[report/](src/main/kotlin/com/pysquish/report/) and
+[SquishConsolePrinter](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt))
+and should be verified against real `squishrunner` output for your Squish build.
+The debugger auto-start and `pydevd` auto-attach remain best-effort — see
+*Debugging* below.
+
+> **Debugging needs PyCharm Professional.** The remote *Python Debug Server*
+> (pydevd attach) does not exist in Community edition, so breakpoints can only be
+> honored on Professional. **Run** works on any edition. For real Squish, attach
+> from inside the test (`import pysquish_debug; pysquish_debug.attach()` at the
+> top of `main()`) since Squish can reset tracing after interpreter startup.
 
 ## Requirements
 
 - PyCharm 2025.1 or newer (`sinceBuild = 251`, no upper bound). Works in any IDE
   with the Python plugin (depends on `com.intellij.modules.python`).
+  **Debugging (breakpoints) requires PyCharm Professional.**
 - JDK 21 (the platform's runtime for 2025.x).
 - A Squish installation providing `squishrunner` (`squishrunner.exe` on Windows).
 
@@ -92,8 +104,14 @@ persisted application-wide in `pysquish.xml`):
 3. It scans for suites automatically; the toolbar **Refresh** rescans.
 4. Pick a suite in the combo box. Each test case shows **Run** and **Debug**
    buttons; the toolbar has **Run Whole Suite**, **Stop**, and a **Settings**
-   shortcut.
-5. Output streams into the console on the right.
+   shortcut. After a run, each test shows its last verdict — a green ✓ (OK) or
+   red ✗ (KO) — next to its name (session-only).
+5. The right side has two tabs:
+   - **Console** — live `squishrunner` output, colored by level (`PASS` green,
+     `FAIL`/`ERROR` red, `WARNING` orange, `INFO` blue, `LOG` grey).
+   - **Report** — a foldable tree parsed from the Squish `xml3.5` report:
+     `startSection`/`endSection` become collapsible layers, entries are
+     iconed/colored by type, and sections containing a failure auto-expand.
 
 ## How discovery works
 
@@ -118,11 +136,19 @@ builds the command:
 to a running squishserver* option is enabled, and always precede `--testsuite`
 (squishrunner rejects them after the suite).
 
-run from the suite directory.
+run from the suite directory. PySquish also appends `--reportgen xml3.5,<tmp>`
+(in addition to the user's own `--reportgen`) so it can parse a structured report
+for the Report tab and per-test verdicts.
+
 [SquishTestRunner](src/main/kotlin/com/pysquish/execution/SquishTestRunner.kt)
-optionally starts the server, launches the runner with an `OSProcessHandler`, and
-attaches it to the tool window's `ConsoleView`. One run is active at a time; the
-server (if started) is torn down when the runner exits.
+optionally starts the server and launches the runner with an `OSProcessHandler`.
+Instead of a raw `attachToProcess`, a
+[SquishConsolePrinter](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt)
+buffers output into whole lines and prints each in a level-based color. When the
+process ends it parses the temp `xml3.5` report
+([report/](src/main/kotlin/com/pysquish/report/)), pushes it to the Report tab and
+the per-test badges, tears down the server, and (for debug runs) stops the Python
+Debug Server. One run is active at a time.
 
 ## Debugging (PyCharm debugger ↔ Squish Python)
 
@@ -147,9 +173,18 @@ Squish runs its own embedded Python, so the integration uses the standard
 
 **Fallbacks / caveats**
 
-- If Squish runs Python with `-S` (no site), `sitecustomize` won't load — add
-  `import pysquish_debug; pysquish_debug.attach()` at the top of a test instead
-  (the module is on `PYTHONPATH`).
+- **Community edition can't debug.** The *Python Debug Server* config type is
+  Professional-only, so `startDebugServer` finds nothing and prints manual help
+  that Community users can't act on. Breakpoints require Professional; **Run** is
+  unaffected.
+- **Real Squish may reset tracing.** The startup `sitecustomize` attach can be
+  undone when `squishrunner` initializes; the socket stays up (logs still flow)
+  but breakpoints never bind. Attach from inside the test —
+  `import pysquish_debug; pysquish_debug.attach()` at the top of `main()` — to
+  re-arm tracing on the thread that runs the test. This is also the fix when
+  Squish runs Python with `-S` (no site).
+- When the run ends, PySquish stops the Python Debug Server it started
+  (`SquishDebugSupport.stopDebugServer`), so the debugger doesn't linger.
 - Auto-start runs asynchronously, so on the very first debug run the server may
   still be coming up when the test connects. If attach fails, keep the **PySquish
   Debug Server** run config listening and re-run — it will reconnect.
@@ -165,13 +200,18 @@ Squish runs its own embedded Python, so the integration uses the standard
 | Settings (model + UI) | [settings/](src/main/kotlin/com/pysquish/settings/) |
 | Suite/test discovery | [model/](src/main/kotlin/com/pysquish/model/) |
 | Command building + execution | [execution/](src/main/kotlin/com/pysquish/execution/) |
+| Console coloring | [execution/SquishConsolePrinter.kt](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt) |
+| Report model + xml3.5 parser | [report/](src/main/kotlin/com/pysquish/report/) |
 | Debugger integration | [debug/SquishDebugSupport.kt](src/main/kotlin/com/pysquish/debug/SquishDebugSupport.kt) |
-| Tool window UI | [toolwindow/](src/main/kotlin/com/pysquish/toolwindow/) |
+| Tool window UI (+ Report tab, badges) | [toolwindow/](src/main/kotlin/com/pysquish/toolwindow/) |
 
 ## Known limitations / next steps
 
-- No structured test-results tree yet — output is the raw runner log. A natural
-  next step is parsing `--reportgen` XML into the IDE's test-runner UI.
+- The Report tree and console colors are driven by the `xml3.5` report schema and
+  the stdout level tokens; both are isolated but should be validated against real
+  `squishrunner` output. A natural next step is mapping the report into the IDE's
+  native test-runner UI.
+- Per-test verdict badges are session-only (not persisted across restarts).
 - Server lifecycle is minimal (start before, kill after). No reuse of an
   already-running server beyond what `--host/--port` provides.
 - `untilBuild` is open; run `verifyPlugin` when adopting a new major PyCharm.
