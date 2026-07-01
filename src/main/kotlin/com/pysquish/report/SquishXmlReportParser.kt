@@ -11,17 +11,34 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
 
 /**
- * Parses a Squish `xml3.5` report into the [SquishRunReport] model.
+ * Parses a Squish `xml3.4` report into the [SquishRunReport] model.
  *
- * The parser is intentionally tolerant: it walks the document, treating leaf
- * `<test>` elements as test cases, `<section>` elements as foldable layers, and
- * `<message>`/`<verification>`/`<result>` elements as entries. Levels come from
- * a `type` attribute (or the element name as a fallback). This keeps it robust
- * across minor schema differences between Squish builds.
+ * Schema shape (the important bits):
+ * ```
+ * <test type="testsuite">
+ *   <prolog><name>suite</name></prolog>
+ *   <test type="testcase">
+ *     <prolog><name>tst_case</name></prolog>
+ *     <message type="LOG"><name>text</name><location/></message>
+ *     <test type="section">              <!-- sections are <test type="section"> -->
+ *       <prolog><name>Section</name></prolog>
+ *       <message type="PASS"><name>..</name></message>
+ *       <test type="section"> ... </test>  <!-- nested arbitrarily deep -->
+ *       <epilog/>
+ *     </test>
+ *     <epilog/>
+ *   </test>
+ * </test>
+ * ```
+ * Both test cases and sections are `<test>` elements distinguished by `type`;
+ * message text is in a `<name>` child. The parser tolerates other Squish XML
+ * shapes (`<section>`, `<verification>`, `<result>`) as a fallback.
  */
 object SquishXmlReportParser {
 
     private val LOG = logger<SquishXmlReportParser>()
+
+    private val TEXT_CHILDREN = setOf("name", "description", "text", "detail")
 
     /** Locates and parses `results.xml` under [reportDir]; null on any failure. */
     fun parse(reportDir: Path): SquishRunReport? {
@@ -50,7 +67,6 @@ object SquishXmlReportParser {
 
     private fun parseFile(xml: Path): SquishRunReport {
         val factory = DocumentBuilderFactory.newInstance().apply {
-            // Harden against external entities / DTD fetches.
             runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
             runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
             runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
@@ -59,79 +75,79 @@ object SquishXmlReportParser {
         val doc = Files.newInputStream(xml).use { factory.newDocumentBuilder().parse(it) }
         doc.documentElement.normalize()
 
-        val caseElements = collectCaseTests(doc.documentElement)
-        val tests = caseElements.map { parseCase(it) }
-        return SquishRunReport(tests)
+        return SquishRunReport(collectCases(doc.documentElement).map { parseCase(it) })
     }
 
-    /** Leaf `<test>` elements (those containing no nested `<test>`) are cases. */
-    private fun collectCaseTests(root: Element): List<Element> {
+    /** Test cases are `<test type="testcase">`; falls back for other schemas. */
+    private fun collectCases(root: Element): List<Element> {
         val allTests = mutableListOf<Element>()
         collectByTag(root, "test", allTests)
-        val leaves = allTests.filter { test -> childElements(test).none { descendantHasTag(it, "test") } }
-        // If the document has no <test> at all, treat the root as a single case.
+
+        val cases = allTests.filter { typeOf(it) == "testcase" }
+        if (cases.isNotEmpty()) return cases
+
+        // Fallback: <test> that are neither sections nor the suite container.
+        val nonStructural = allTests.filter { typeOf(it) !in setOf("section", "testsuite") }
+        if (nonStructural.isNotEmpty()) return nonStructural
+
+        // Last resort: leaf <test> elements, or the root itself.
+        val leaves = allTests.filter { t -> childElements(t).none { descendantHasTag(it, "test") } }
         return leaves.ifEmpty { if (allTests.isEmpty()) listOf(root) else allTests }
     }
 
     private fun parseCase(caseEl: Element): SquishTestReport {
         val name = nameOf(caseEl) ?: caseEl.getAttribute("name").ifBlank { "test" }
         val root = SquishReportNode.Section(title = name, timestamp = timeOf(caseEl))
-        for (child in childElements(caseEl)) {
-            appendNode(child, root.children)
-        }
+        for (child in childElements(caseEl)) appendNode(child, root.children)
         return SquishTestReport(name = name, verdict = verdictOf(root), root = root)
     }
 
     /** Appends the report node(s) produced by [el] into [out]. */
     private fun appendNode(el: Element, out: MutableList<SquishReportNode>) {
-        when (el.tagName.lowercase()) {
-            "prolog", "epilog", "name" -> return // structural, not content
-            "section" -> {
+        val tag = el.tagName.lowercase()
+        when {
+            tag == "prolog" || tag == "epilog" || tag == "name" || tag == "location" -> return
+
+            // Sections (and any nested <test>) become foldable layers.
+            tag == "test" || tag == "section" -> {
                 val section = SquishReportNode.Section(
-                    title = nameOf(el) ?: el.getAttribute("title").ifBlank { "Section" },
+                    title = nameOf(el) ?: el.getAttribute("name").ifBlank { "Section" },
                     timestamp = timeOf(el),
                 )
                 for (child in childElements(el)) appendNode(child, section.children)
                 out.add(section)
             }
-            "message" -> out.add(entryOf(el, el.getAttribute("type")))
-            "verification" -> {
-                // A verification wraps one or more <result> elements.
+
+            tag == "message" -> out.add(entryOf(el, el.getAttribute("type")))
+
+            tag == "verification" -> {
                 val results = childElements(el).filter { it.tagName.equals("result", true) }
-                if (results.isEmpty()) {
-                    out.add(entryOf(el, el.getAttribute("type").ifBlank { "PASS" }))
-                } else {
-                    results.forEach { out.add(entryOf(it, it.getAttribute("type"))) }
-                }
+                if (results.isEmpty()) out.add(entryOf(el, el.getAttribute("type").ifBlank { "PASS" }))
+                else results.forEach { out.add(entryOf(it, it.getAttribute("type"))) }
             }
-            "result", "scriptedverificationresult" ->
+
+            tag == "result" || tag == "scriptedverificationresult" ->
                 out.add(entryOf(el, el.getAttribute("type")))
-            "log", "pass", "fail", "error", "warning", "fatal", "info" ->
-                out.add(entryOf(el, el.tagName))
-            else -> {
-                // Unknown wrapper: recurse so we don't lose nested content.
-                for (child in childElements(el)) appendNode(child, out)
-            }
+
+            else -> for (child in childElements(el)) appendNode(child, out)
         }
     }
 
     private fun entryOf(el: Element, typeToken: String?): SquishReportNode.Entry {
-        val detailEl = childElements(el).firstOrNull {
-            it.tagName.equals("description", true) ||
-                it.tagName.equals("text", true) ||
-                it.tagName.equals("detail", true)
-        }
-        val message = (detailEl?.let { directText(it) } ?: directText(el))
+        val textEl = childElements(el).firstOrNull { it.tagName.lowercase() in TEXT_CHILDREN }
+        val message = (textEl?.let { directText(it) } ?: directText(el))
             .ifBlank { el.getAttribute("text") }
             .ifBlank { el.getAttribute("message") }
-        val detailValues = childElements(el)
-            .filter { it.tagName.equals("detail", true) && it !== detailEl }
-            .joinToString("\n") { directText(it) }
-            .ifBlank { null }
+            .trim()
+            .ifEmpty { "(no message)" }
+        val location = childElements(el)
+            .firstOrNull { it.tagName.equals("location", true) }
+            ?.let { directText(it) }
+            ?.trim()?.ifBlank { null }
         return SquishReportNode.Entry(
             level = SquishLogLevel.from(typeToken),
-            message = message.trim().ifEmpty { "(no message)" },
-            detail = detailValues,
+            message = message,
+            detail = location,
             timestamp = timeOf(el),
         )
     }
@@ -157,6 +173,8 @@ object SquishXmlReportParser {
     }
 
     // --- DOM helpers -------------------------------------------------------
+
+    private fun typeOf(el: Element): String = el.getAttribute("type").trim().lowercase()
 
     private fun childElements(el: Element): List<Element> {
         val result = ArrayList<Element>()

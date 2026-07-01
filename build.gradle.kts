@@ -32,6 +32,9 @@ dependencies {
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    // The IntelliJ platform test framework's JUnit5 session listener references
+    // JUnit4's junit.framework.TestCase; provide it so the test executor starts.
+    testRuntimeOnly("junit:junit:4.13.2")
 }
 
 kotlin {
