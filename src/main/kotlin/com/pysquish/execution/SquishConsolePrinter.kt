@@ -47,8 +47,10 @@ object SquishLogClassifier {
     fun classify(rawLine: String): SquishLogLevel {
         val line = rawLine.trim()
         if (line.isEmpty()) return SquishLogLevel.UNKNOWN
-        val tokens = line.split(Regex("[\\s:]+")).filter { it.isNotEmpty() }
-        for (token in tokens.take(3)) {
+        // Split on whitespace only (NOT colons) so a leading ISO timestamp like
+        // 2024-01-15T10:23:45 stays one token and the level (e.g. LOG) is next.
+        val tokens = line.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        for (token in tokens.take(4)) {
             val level = SquishLogLevel.from(token.trim('[', ']', '*', '-', '(', ')'))
             if (level != SquishLogLevel.UNKNOWN) return level
         }
@@ -99,7 +101,7 @@ class SquishConsolePrinter(private val console: ConsoleView) : ProcessAdapter() 
     }
 
     private fun printLine(rawLine: String, isError: Boolean) {
-        val line = stripControl(rawLine)
+        val line = unescape(stripControl(rawLine))
         val level = SquishLogClassifier.classify(line)
         val contentType = when {
             level != SquishLogLevel.UNKNOWN -> SquishConsoleColors.contentType(level)
@@ -115,5 +117,28 @@ class SquishConsolePrinter(private val console: ConsoleView) : ProcessAdapter() 
 
         /** Removes ANSI escape sequences and carriage returns for a clean line. */
         fun stripControl(s: String): String = ANSI.replace(s.replace("\r", ""), "")
+
+        /** Unescapes Squish's backslash escapes (\\, \t, \n, \") for display. */
+        fun unescape(s: String): String {
+            if (s.indexOf('\\') < 0) return s
+            val sb = StringBuilder(s.length)
+            var i = 0
+            while (i < s.length) {
+                val c = s[i]
+                if (c == '\\' && i + 1 < s.length) {
+                    when (s[i + 1]) {
+                        '\\' -> { sb.append('\\'); i += 2 }
+                        'n' -> { sb.append('\n'); i += 2 }
+                        't' -> { sb.append('\t'); i += 2 }
+                        'r' -> i += 2
+                        '"' -> { sb.append('"'); i += 2 }
+                        else -> { sb.append(c); i += 1 }
+                    }
+                } else {
+                    sb.append(c); i += 1
+                }
+            }
+            return sb.toString()
+        }
     }
 }
