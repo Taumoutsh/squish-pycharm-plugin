@@ -12,6 +12,7 @@ enum class SquishLogLevel {
     ERROR,
     FAIL,
     FATAL,
+    TRACEBACK,
     UNKNOWN;
 
     /** True for levels that make a test/section count as failed. */
@@ -52,6 +53,11 @@ sealed interface SquishReportNode {
         val timestamp: String? = null,
     ) : SquishReportNode
 
+    /** A screenshot captured on failure. */
+    data class Image(
+        val path: java.nio.file.Path,
+    ) : SquishReportNode
+
     /** A foldable section; [containsFailure] is precomputed for auto-expand. */
     data class Section(
         val title: String,
@@ -62,6 +68,7 @@ sealed interface SquishReportNode {
             get() = children.any {
                 when (it) {
                     is Entry -> it.level.isFailure
+                    is Image -> false
                     is Section -> it.containsFailure
                 }
             }

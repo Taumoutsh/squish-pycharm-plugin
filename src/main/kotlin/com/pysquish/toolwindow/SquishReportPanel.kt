@@ -1,6 +1,10 @@
 package com.pysquish.toolwindow
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
@@ -13,19 +17,32 @@ import com.pysquish.report.SquishReportNode
 import com.pysquish.report.SquishRunReport
 import com.pysquish.report.SquishTestReport
 import com.pysquish.report.SquishVerdict
+import com.pysquish.report.SquishXmlReportParser.TRACEBACK_MARKER
 import java.awt.BorderLayout
+import java.awt.Font
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
+import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import javax.swing.AbstractAction
 import javax.swing.JComponent
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
+import javax.swing.KeyStroke
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
 
 /**
  * The "Report" tab: a foldable tree of the parsed Squish report. Sections are
- * collapsible layers; entries are colored/iconed by level. Sections (and tests)
- * that contain a failure are auto-expanded; everything else starts collapsed.
+ * collapsible layers; entries are colored/iconed by level. On failure the tree
+ * unfolds down to each error and scrolls to the first. Tracebacks render as a
+ * monospaced foldable block, failure screenshots as openable image nodes, and
+ * any node can be copied (Ctrl/Cmd+C or right-click).
  */
-class SquishReportPanel : JPanel(BorderLayout()) {
+class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val tree = Tree(DefaultTreeModel(DefaultMutableTreeNode("Report"))).apply {
         isRootVisible = false
@@ -39,6 +56,8 @@ class SquishReportPanel : JPanel(BorderLayout()) {
     init {
         add(emptyLabel, BorderLayout.NORTH)
         add(JBScrollPane(tree), BorderLayout.CENTER)
+        installCopyAction()
+        installMouseActions()
     }
 
     /** Rebuilds the tree from [report]; pass null to clear. */
@@ -56,7 +75,7 @@ class SquishReportPanel : JPanel(BorderLayout()) {
             root.add(testNode)
         }
         tree.model = DefaultTreeModel(root)
-        expandFailures(root)
+        unfoldToFailures(root)
     }
 
     private fun addChildren(parent: DefaultMutableTreeNode, section: SquishReportNode.Section) {
@@ -68,31 +87,108 @@ class SquishReportPanel : JPanel(BorderLayout()) {
                     parent.add(node)
                 }
                 is SquishReportNode.Entry -> parent.add(DefaultMutableTreeNode(child))
+                is SquishReportNode.Image -> parent.add(DefaultMutableTreeNode(child))
             }
         }
     }
 
-    /** Expands tests/sections that contain a failure; leaves the rest collapsed. */
-    private fun expandFailures(root: DefaultMutableTreeNode) {
-        for (i in 0 until root.childCount) {
-            val testNode = root.getChildAt(i) as DefaultMutableTreeNode
-            val test = testNode.userObject as? SquishTestReport ?: continue
-            if (test.verdict == SquishVerdict.FAIL) {
-                tree.expandPath(TreePath(testNode.path))
-                expandFailingSections(testNode)
+    /** Expands the full path to every failure (+ traceback), scrolls to the first. */
+    private fun unfoldToFailures(root: DefaultMutableTreeNode) {
+        var firstFailure: DefaultMutableTreeNode? = null
+
+        fun visit(node: DefaultMutableTreeNode) {
+            val obj = node.userObject
+            val isFailureEntry = obj is SquishReportNode.Entry && obj.level.isFailure
+            val isTraceback = obj is SquishReportNode.Section && obj.title == TRACEBACK_MARKER
+            if (isFailureEntry || isTraceback) {
+                expandAncestors(node)
+                if (isFailureEntry && firstFailure == null) firstFailure = node
             }
+            for (i in 0 until node.childCount) visit(node.getChildAt(i) as DefaultMutableTreeNode)
+        }
+        for (i in 0 until root.childCount) visit(root.getChildAt(i) as DefaultMutableTreeNode)
+
+        firstFailure?.let {
+            val path = TreePath(it.path)
+            tree.selectionPath = path
+            tree.scrollPathToVisible(path)
         }
     }
 
-    private fun expandFailingSections(node: DefaultMutableTreeNode) {
-        for (i in 0 until node.childCount) {
-            val child = node.getChildAt(i) as DefaultMutableTreeNode
-            val section = child.userObject as? SquishReportNode.Section ?: continue
-            if (section.containsFailure) {
-                tree.expandPath(TreePath(child.path))
-                expandFailingSections(child)
+    /** Expands each ancestor from the root down so [node] becomes visible. */
+    private fun expandAncestors(node: DefaultMutableTreeNode) {
+        val paths = ArrayList<TreePath>()
+        var current: TreePath? = TreePath(node.path)
+        while (current != null) {
+            paths.add(0, current)
+            current = current.parentPath
+        }
+        paths.forEach { tree.expandPath(it) }
+    }
+
+    // --- copy --------------------------------------------------------------
+
+    private fun installCopyAction() {
+        val copyKey = KeyStroke.getKeyStroke(KeyEvent.VK_C, Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx)
+        tree.inputMap.put(copyKey, "pysquish-copy")
+        tree.actionMap.put("pysquish-copy", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) = copySelection()
+        })
+    }
+
+    private fun installMouseActions() {
+        tree.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) = maybePopup(e)
+            override fun mouseReleased(e: MouseEvent) = maybePopup(e)
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.clickCount == 2) openSelectedImage()
+            }
+        })
+    }
+
+    private fun maybePopup(e: MouseEvent) {
+        if (!e.isPopupTrigger) return
+        val row = tree.getClosestRowForLocation(e.x, e.y)
+        val selectedRows = tree.selectionRows
+        if (row >= 0 && (selectedRows == null || row !in selectedRows)) tree.setSelectionRow(row)
+        JPopupMenu().apply {
+            add(JMenuItem("Copy").apply { addActionListener { copySelection() } })
+            selectedImagePath()?.let {
+                add(JMenuItem("Open Image").apply { addActionListener { openSelectedImage() } })
+            }
+        }.show(tree, e.x, e.y)
+    }
+
+    private fun copySelection() {
+        val text = tree.selectionPaths.orEmpty()
+            .mapNotNull { it.lastPathComponent as? DefaultMutableTreeNode }
+            .joinToString("\n") { copyText(it) }
+        if (text.isNotEmpty()) CopyPasteManager.getInstance().setContents(StringSelection(text))
+    }
+
+    private fun copyText(node: DefaultMutableTreeNode): String = when (val obj = node.userObject) {
+        is SquishTestReport -> obj.name
+        is SquishReportNode.Entry ->
+            if (obj.level == SquishLogLevel.TRACEBACK) obj.message else "${obj.level}: ${obj.message}"
+        is SquishReportNode.Image -> obj.path.toString()
+        is SquishReportNode.Section -> buildString {
+            append(obj.title)
+            for (i in 0 until node.childCount) {
+                append('\n').append(copyText(node.getChildAt(i) as DefaultMutableTreeNode))
             }
         }
+        else -> obj?.toString().orEmpty()
+    }
+
+    // --- images ------------------------------------------------------------
+
+    private fun selectedImagePath(): java.nio.file.Path? =
+        ((tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject as? SquishReportNode.Image)?.path
+
+    private fun openSelectedImage() {
+        val path = selectedImagePath() ?: return
+        val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return
+        runCatching { OpenFileDescriptor(project, vf).navigate(true) }
     }
 
     fun component(): JComponent = this
@@ -107,29 +203,40 @@ class SquishReportPanel : JPanel(BorderLayout()) {
             row: Int,
             hasFocus: Boolean,
         ) {
-            val userObject = (value as? DefaultMutableTreeNode)?.userObject
-            when (userObject) {
+            when (val obj = (value as? DefaultMutableTreeNode)?.userObject) {
                 is SquishTestReport -> {
-                    icon = when (userObject.verdict) {
+                    icon = when (obj.verdict) {
                         SquishVerdict.PASS -> AllIcons.RunConfigurations.TestPassed
                         SquishVerdict.FAIL -> AllIcons.RunConfigurations.TestFailed
                         SquishVerdict.UNKNOWN -> AllIcons.RunConfigurations.TestNotRan
                     }
-                    append(userObject.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    append(obj.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                 }
                 is SquishReportNode.Section -> {
-                    icon = AllIcons.Nodes.Folder
-                    append(userObject.title, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                    if (userObject.containsFailure) {
+                    val isTraceback = obj.title == TRACEBACK_MARKER
+                    icon = if (isTraceback) AllIcons.General.Error else AllIcons.Nodes.Folder
+                    append(obj.title, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    if (!isTraceback && obj.containsFailure) {
                         append("  (failed)", SimpleTextAttributes.ERROR_ATTRIBUTES)
                     }
                 }
                 is SquishReportNode.Entry -> {
-                    icon = iconFor(userObject.level)
-                    append("${userObject.level}: ", attributesFor(userObject.level))
-                    append(userObject.message, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    if (obj.level == SquishLogLevel.TRACEBACK) {
+                        font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
+                        append(obj.message, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    } else {
+                        icon = iconFor(obj.level)
+                        append("${obj.level}: ", attributesFor(obj.level))
+                        append(obj.message, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                        obj.detail?.let { append("  ($it)", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
+                    }
                 }
-                else -> append(userObject?.toString() ?: "", SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                is SquishReportNode.Image -> {
+                    icon = AllIcons.FileTypes.Image
+                    append(obj.path.fileName.toString(), SimpleTextAttributes.LINK_ATTRIBUTES)
+                    append("  (double-click to open)", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+                }
+                else -> append(obj?.toString() ?: "", SimpleTextAttributes.REGULAR_ATTRIBUTES)
             }
         }
 
@@ -139,7 +246,7 @@ class SquishReportPanel : JPanel(BorderLayout()) {
             SquishLogLevel.ERROR -> AllIcons.General.Error
             SquishLogLevel.WARNING -> AllIcons.General.Warning
             SquishLogLevel.INFO -> AllIcons.General.Information
-            SquishLogLevel.LOG, SquishLogLevel.UNKNOWN -> AllIcons.General.Note
+            SquishLogLevel.LOG, SquishLogLevel.TRACEBACK, SquishLogLevel.UNKNOWN -> AllIcons.General.Note
         }
 
         private fun attributesFor(level: SquishLogLevel): SimpleTextAttributes = when (level) {
@@ -151,7 +258,7 @@ class SquishReportPanel : JPanel(BorderLayout()) {
                 SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor(0xB8860B, 0xD9A441))
             SquishLogLevel.INFO ->
                 SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor(0x2A6FDB, 0x6897BB))
-            SquishLogLevel.LOG, SquishLogLevel.UNKNOWN ->
+            SquishLogLevel.LOG, SquishLogLevel.TRACEBACK, SquishLogLevel.UNKNOWN ->
                 SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor(0x7A7A7A, 0x999999))
         }
     }

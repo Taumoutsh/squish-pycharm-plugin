@@ -27,7 +27,7 @@ object SquishConsoleColors {
     fun contentType(level: SquishLogLevel): ConsoleViewContentType = when (level) {
         SquishLogLevel.PASS -> PASS
         SquishLogLevel.INFO -> INFO
-        SquishLogLevel.LOG -> LOG
+        SquishLogLevel.LOG, SquishLogLevel.TRACEBACK -> LOG
         SquishLogLevel.WARNING -> ConsoleViewContentType.LOG_WARNING_OUTPUT
         SquishLogLevel.ERROR,
         SquishLogLevel.FAIL,

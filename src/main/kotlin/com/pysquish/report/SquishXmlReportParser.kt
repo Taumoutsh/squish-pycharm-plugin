@@ -118,7 +118,7 @@ object SquishXmlReportParser {
                 out.add(section)
             }
 
-            tag == "message" -> out.add(entryOf(el, el.getAttribute("type")))
+            tag == "message" -> out.add(messageNode(el))
 
             tag == "verification" -> {
                 val results = childElements(el).filter { it.tagName.equals("result", true) }
@@ -131,6 +131,34 @@ object SquishXmlReportParser {
 
             else -> for (child in childElements(el)) appendNode(child, out)
         }
+    }
+
+    /** Text marking the start of a Python traceback in a Squish message. */
+    const val TRACEBACK_MARKER = "Traceback (most recent call last)"
+
+    /**
+     * Builds the node for a `<message>`. A message carrying a Python traceback
+     * becomes a foldable [SquishReportNode.Section] with one TRACEBACK line per
+     * frame, so it renders readably; everything else is a plain entry.
+     */
+    private fun messageNode(el: Element): SquishReportNode {
+        val entry = entryOf(el, el.getAttribute("type"))
+        if (!entry.message.contains(TRACEBACK_MARKER, ignoreCase = true)) return entry
+
+        val section = SquishReportNode.Section(title = TRACEBACK_MARKER, timestamp = entry.timestamp)
+        val lines = entry.message.split('\n').map { it.trimEnd() }.filter { it.isNotBlank() }
+        lines.forEachIndexed { index, line ->
+            // Keep the final line (the exception) at the original failure level so
+            // the verdict, red coloring and auto-expand still work; frames are
+            // TRACEBACK (monospace).
+            val level = if (index == lines.lastIndex && entry.level.isFailure) {
+                entry.level
+            } else {
+                SquishLogLevel.TRACEBACK
+            }
+            section.children.add(SquishReportNode.Entry(level = level, message = line))
+        }
+        return section
     }
 
     private fun entryOf(el: Element, typeToken: String?): SquishReportNode.Entry {
@@ -162,6 +190,7 @@ object SquishXmlReportParser {
                     if (node.level.isFailure) sawFailure = true
                 }
                 is SquishReportNode.Section -> node.children.forEach { walk(it) }
+                is SquishReportNode.Image -> {}
             }
         }
         section.children.forEach { walk(it) }

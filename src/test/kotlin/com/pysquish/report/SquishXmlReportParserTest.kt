@@ -84,4 +84,30 @@ class SquishXmlReportParserTest {
         assertNotNull(log.message)
         assertEquals("a.py:1", log.detail)
     }
+
+    @Test
+    fun `formats a failing traceback into a section keeping the failure`() {
+        val xml = """
+            <SquishReport>
+              <test type="testcase">
+                <prolog><name>tst_x</name></prolog>
+                <message type="FATAL"><name>Traceback (most recent call last):
+      File "a.py", line 3, in main
+        boom()
+    RuntimeError: nope</name></message>
+              </test>
+            </SquishReport>
+        """.trimIndent()
+        val test = parse(xml).tests.first()
+        assertEquals(SquishVerdict.FAIL, test.verdict)
+
+        val traceback = test.root.children[0] as SquishReportNode.Section
+        assertEquals("Traceback (most recent call last)", traceback.title)
+        assertTrue(traceback.containsFailure)
+
+        val lines = traceback.children.map { it as SquishReportNode.Entry }
+        assertEquals(SquishLogLevel.TRACEBACK, lines.first().level)
+        assertEquals(SquishLogLevel.FATAL, lines.last().level)
+        assertEquals("RuntimeError: nope", lines.last().message)
+    }
 }

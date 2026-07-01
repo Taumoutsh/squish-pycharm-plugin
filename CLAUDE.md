@@ -112,9 +112,14 @@ persisted application-wide in `pysquish.xml`):
 5. The right side has two tabs:
    - **Console** — live `squishrunner` output, colored by level (`PASS` green,
      `FAIL`/`ERROR` red, `WARNING` orange, `INFO` blue, `LOG` grey).
-   - **Report** — a foldable tree parsed from the Squish `xml3.4` report:
-     `startSection`/`endSection` become collapsible layers, entries are
-     iconed/colored by type, and sections containing a failure auto-expand.
+   - **Report** — a foldable tree parsed from the Squish `xml3.4` report
+     (`<test type="section">` become collapsible layers, nested to any depth;
+     entries are iconed/colored by type). On failure it **unfolds down to each
+     error** and scrolls to the first. A trailing Python **traceback** is shown
+     as its own monospace, foldable block (the exception line stays red). Any
+     node is **copyable** (Ctrl/Cmd+C or right-click). A failure **screenshot**
+     (`failedImages/failed_*.png`, under the test or suite dir) appears as an
+     image node you can double-click to open.
 
 ## How discovery works
 

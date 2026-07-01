@@ -24,10 +24,12 @@ import com.intellij.ui.components.JBTabbedPane
 import com.pysquish.execution.SquishTestRunner
 import com.pysquish.model.SquishProjectScanner
 import com.pysquish.model.SquishSuite
+import com.pysquish.report.SquishReportNode
 import com.pysquish.report.SquishRunReport
 import com.pysquish.report.SquishVerdict
 import com.pysquish.settings.SquishSettingsConfigurable
 import java.awt.BorderLayout
+import java.nio.file.Files
 import java.nio.file.Path
 import javax.swing.Icon
 import java.awt.Component
@@ -51,7 +53,7 @@ class SquishToolWindowPanel(private val project: Project) :
 
     private val runner = SquishTestRunner(project, console)
 
-    private val reportPanel = SquishReportPanel()
+    private val reportPanel = SquishReportPanel(project)
 
     private val suiteCombo = JComboBox<SquishSuite>()
     private val testListPanel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
@@ -155,11 +157,40 @@ class SquishToolWindowPanel(private val project: Project) :
             val suite = lastRunSuite
             report.tests.forEach { tr ->
                 val test = suite?.tests?.firstOrNull { matchesReportName(it, tr.name) }
-                if (test != null) verdicts[test.directory] = tr.verdict
+                if (test != null) {
+                    verdicts[test.directory] = tr.verdict
+                    if (tr.verdict == SquishVerdict.FAIL) attachScreenshots(tr, test, suite)
+                }
             }
         }
         reportPanel.setReport(report)
         rebuildTestList()
+    }
+
+    /** Adds any `failedImages/failed_*.png` (under the test or suite dir) to a failed test. */
+    private fun attachScreenshots(
+        report: com.pysquish.report.SquishTestReport,
+        test: com.pysquish.model.SquishTest,
+        suite: SquishSuite,
+    ) {
+        val pattern = Regex("failed_.*\\.png", RegexOption.IGNORE_CASE)
+        val images = listOf(test.directory, suite.directory)
+            .map { it.resolve("failedImages") }
+            .filter { Files.isDirectory(it) }
+            .flatMap { dir ->
+                runCatching {
+                    Files.list(dir).use { stream ->
+                        stream.filter { Files.isRegularFile(it) && pattern.matches(it.fileName.toString()) }
+                            .sorted()
+                            .toList()
+                    }
+                }.getOrDefault(emptyList())
+            }
+            .distinct()
+        if (images.isEmpty()) return
+        val section = SquishReportNode.Section(title = "Screenshots")
+        images.forEach { section.children.add(SquishReportNode.Image(it)) }
+        report.root.children.add(section)
     }
 
     /** The report may name a test by full path or with different casing. */
@@ -171,10 +202,11 @@ class SquishToolWindowPanel(private val project: Project) :
             reportName.endsWith(test.name)
     }
 
-    private fun statusIcon(test: com.pysquish.model.SquishTest): Icon? = when (verdicts[test.directory]) {
+    /** Always non-null so every row has a same-size icon and titles line up. */
+    private fun statusIcon(test: com.pysquish.model.SquishTest): Icon = when (verdicts[test.directory]) {
         SquishVerdict.PASS -> AllIcons.RunConfigurations.TestPassed
         SquishVerdict.FAIL -> AllIcons.RunConfigurations.TestFailed
-        else -> null
+        else -> AllIcons.RunConfigurations.TestNotRan
     }
 
     private fun loadSuites() {
@@ -239,12 +271,14 @@ class SquishToolWindowPanel(private val project: Project) :
             row.add(name, BorderLayout.CENTER)
 
             val buttons = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-            val runBtn = JButton("Run", AllIcons.Actions.Execute).apply {
+            val runBtn = JButton(AllIcons.Actions.Execute).apply {
                 toolTipText = "Run ${test.name}"
+                margin = JBUI.insets(2)
                 addActionListener { launch(suite, test, debug = false) }
             }
-            val debugBtn = JButton("Debug", AllIcons.Actions.StartDebugger).apply {
-                toolTipText = "Run ${test.name} with the PyCharm debugger attached"
+            val debugBtn = JButton(AllIcons.Actions.StartDebugger).apply {
+                toolTipText = "Debug ${test.name} (PyCharm debugger attached)"
+                margin = JBUI.insets(2)
                 addActionListener { launch(suite, test, debug = true) }
             }
             runButtons.add(runBtn)
