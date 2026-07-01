@@ -9,10 +9,10 @@ Python debugger to the running test so breakpoints are honored.
 ## Status
 
 v0.2.0 — adds per-test result badges, a colored console, a structured **Report**
-tab (parsed from the Squish `xml3.5` report), and automatic teardown of the
+tab (parsed from the Squish `xml3.4` report), and automatic teardown of the
 Python Debug Server when a run ends. Builds with `./gradlew buildPlugin`. The
 console coloring and XML report parsing are **format-driven** — the level
-keywords and the `xml3.5` element handling are isolated (see
+keywords and the `xml3.4` element handling are isolated (see
 [report/](src/main/kotlin/com/pysquish/report/) and
 [SquishConsolePrinter](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt))
 and should be verified against real `squishrunner` output for your Squish build.
@@ -95,6 +95,9 @@ persisted application-wide in `pysquish.xml`):
   is passed.
 - **Extra squishrunner args** — appended verbatim to every run (default
   `--reportgen stdout` so results land in the console).
+- **Report generator (XML)** — the Squish XML generator PySquish adds for the
+  Report tab / verdicts (default `xml3.4`). Must be one your `squishrunner`
+  supports; use a native XML format (not `xmljunit`) so sections are preserved.
 - **Debug host / port** and **pydevd_pycharm path** — see *Debugging*.
 
 ## Usage
@@ -109,7 +112,7 @@ persisted application-wide in `pysquish.xml`):
 5. The right side has two tabs:
    - **Console** — live `squishrunner` output, colored by level (`PASS` green,
      `FAIL`/`ERROR` red, `WARNING` orange, `INFO` blue, `LOG` grey).
-   - **Report** — a foldable tree parsed from the Squish `xml3.5` report:
+   - **Report** — a foldable tree parsed from the Squish `xml3.4` report:
      `startSection`/`endSection` become collapsible layers, entries are
      iconed/colored by type, and sections containing a failure auto-expand.
 
@@ -136,16 +139,18 @@ builds the command:
 to a running squishserver* option is enabled, and always precede `--testsuite`
 (squishrunner rejects them after the suite).
 
-run from the suite directory. PySquish also appends `--reportgen xml3.5,<tmp>`
+run from the suite directory. PySquish also appends `--reportgen <gen>,<tmp>`
 (in addition to the user's own `--reportgen`) so it can parse a structured report
-for the Report tab and per-test verdicts.
+for the Report tab and per-test verdicts. `<gen>` is the **Report generator**
+setting (default `xml3.4`); it must be a Squish-native XML format your
+`squishrunner` supports (not `xmljunit`).
 
 [SquishTestRunner](src/main/kotlin/com/pysquish/execution/SquishTestRunner.kt)
 optionally starts the server and launches the runner with an `OSProcessHandler`.
 Instead of a raw `attachToProcess`, a
 [SquishConsolePrinter](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt)
 buffers output into whole lines and prints each in a level-based color. When the
-process ends it parses the temp `xml3.5` report
+process ends it parses the temp `xml3.4` report
 ([report/](src/main/kotlin/com/pysquish/report/)), pushes it to the Report tab and
 the per-test badges, tears down the server, and (for debug runs) stops the Python
 Debug Server. One run is active at a time.
@@ -201,13 +206,13 @@ Squish runs its own embedded Python, so the integration uses the standard
 | Suite/test discovery | [model/](src/main/kotlin/com/pysquish/model/) |
 | Command building + execution | [execution/](src/main/kotlin/com/pysquish/execution/) |
 | Console coloring | [execution/SquishConsolePrinter.kt](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt) |
-| Report model + xml3.5 parser | [report/](src/main/kotlin/com/pysquish/report/) |
+| Report model + xml3.4 parser | [report/](src/main/kotlin/com/pysquish/report/) |
 | Debugger integration | [debug/SquishDebugSupport.kt](src/main/kotlin/com/pysquish/debug/SquishDebugSupport.kt) |
 | Tool window UI (+ Report tab, badges) | [toolwindow/](src/main/kotlin/com/pysquish/toolwindow/) |
 
 ## Known limitations / next steps
 
-- The Report tree and console colors are driven by the `xml3.5` report schema and
+- The Report tree and console colors are driven by the `xml3.4` report schema and
   the stdout level tokens; both are isolated but should be validated against real
   `squishrunner` output. A natural next step is mapping the report into the IDE's
   native test-runner UI.

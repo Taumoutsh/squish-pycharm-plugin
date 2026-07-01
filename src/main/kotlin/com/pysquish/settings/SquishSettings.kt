@@ -47,6 +47,13 @@ class SquishSettings : PersistentStateComponent<SquishSettings.State> {
          */
         var extraRunnerArgs by string("--reportgen stdout")
 
+        /**
+         * Squish XML report generator used to feed the Report tab and per-test
+         * verdicts (e.g. `xml3.4`). Must be one your `squishrunner` supports;
+         * a Squish-native XML format (not `xmljunit`) is required for sections.
+         */
+        var reportGenerator by string("xml3.4")
+
         /** Host PyCharm's Python debug server listens on for remote attach. */
         var debugHost by string("127.0.0.1")
 

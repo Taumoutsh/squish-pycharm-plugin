@@ -18,8 +18,8 @@ object SquishCommandBuilder {
      * @param debugEnv extra environment variables (e.g. for remote debugging) and
      *                 PYTHONPATH entries that should be merged into the process.
      */
-    /** Squish report generator used to feed the structured Report tab. */
-    const val REPORT_FORMAT = "xml3.5"
+    /** Default Squish report generator when the setting is blank. */
+    const val DEFAULT_REPORT_FORMAT = "xml3.4"
 
     fun runnerCommand(
         suite: SquishSuite,
@@ -64,8 +64,9 @@ object SquishCommandBuilder {
         // Structured report for the Report tab / per-test verdicts. Added last so
         // it never interferes with the user's own --reportgen (e.g. stdout).
         if (reportDir != null) {
+            val format = settings.reportGenerator?.trim()?.ifEmpty { null } ?: DEFAULT_REPORT_FORMAT
             cmd.addParameter("--reportgen")
-            cmd.addParameter("$REPORT_FORMAT,$reportDir")
+            cmd.addParameter("$format,$reportDir")
         }
 
         applyEnvironment(cmd, debugEnv, extraPythonPath)

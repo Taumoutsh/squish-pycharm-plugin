@@ -63,6 +63,14 @@ class SquishSettingsConfigurable : BoundConfigurable("PySquish") {
                     .comment("Appended to every run, e.g. <code>--reportgen stdout --tags smoke</code>.")
                     .align(com.intellij.ui.dsl.builder.AlignX.FILL)
             }
+            row("Report generator (XML):") {
+                textField()
+                    .bindText({ state.reportGenerator ?: "" }, { state.reportGenerator = it })
+                    .comment(
+                        "Squish XML generator for the Report tab / verdicts, e.g. <code>xml3.4</code>. " +
+                            "Must be one your squishrunner supports (a native XML format, not xmljunit).",
+                    )
+            }
         }
 
         group("Python Debugger (remote attach)") {
