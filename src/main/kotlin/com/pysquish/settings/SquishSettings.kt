@@ -54,6 +54,14 @@ class SquishSettings : PersistentStateComponent<SquishSettings.State> {
          */
         var reportGenerator by string("xml3.4")
 
+        /**
+         * Directory where Squish stores failure screenshots (e.g. an AppData
+         * results path). When set, the Report tab looks here for `failed_*.png`
+         * instead of the repository's `failedImages/` folders, so screenshots
+         * stay in AppData and are not copied into the repo. Blank = old behavior.
+         */
+        var screenshotsDir by string("")
+
         /** Host PyCharm's Python debug server listens on for remote attach. */
         var debugHost by string("127.0.0.1")
 

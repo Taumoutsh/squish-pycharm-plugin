@@ -17,9 +17,9 @@ import com.pysquish.report.SquishReportNode
 import com.pysquish.report.SquishRunReport
 import com.pysquish.report.SquishTestReport
 import com.pysquish.report.SquishVerdict
+import com.pysquish.execution.SquishScriptLocator
 import com.pysquish.report.SquishXmlReportParser.TRACEBACK_MARKER
 import java.awt.BorderLayout
-import java.awt.Font
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.awt.event.KeyEvent
@@ -141,7 +141,7 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
             override fun mousePressed(e: MouseEvent) = maybePopup(e)
             override fun mouseReleased(e: MouseEvent) = maybePopup(e)
             override fun mouseClicked(e: MouseEvent) {
-                if (e.clickCount == 2) openSelectedImage()
+                if (e.clickCount == 2 && !openSelectedImage()) openSelectedLocation()
             }
         })
     }
@@ -185,10 +185,21 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
     private fun selectedImagePath(): java.nio.file.Path? =
         ((tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject as? SquishReportNode.Image)?.path
 
-    private fun openSelectedImage() {
-        val path = selectedImagePath() ?: return
-        val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return
-        runCatching { OpenFileDescriptor(project, vf).navigate(true) }
+    private fun openSelectedImage(): Boolean {
+        val path = selectedImagePath() ?: return false
+        val vf = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return false
+        return runCatching { OpenFileDescriptor(project, vf).navigate(true); true }.getOrDefault(false)
+    }
+
+    /** Opens the repository script referenced by the selected entry's location. */
+    private fun openSelectedLocation(): Boolean {
+        val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return false
+        val entry = node.userObject as? SquishReportNode.Entry ?: return false
+        val loc = SquishScriptLocator.parse(entry.detail) ?: SquishScriptLocator.parse(entry.message) ?: return false
+        val vf = SquishScriptLocator.findInProject(project, loc.fileName) ?: return false
+        return runCatching {
+            OpenFileDescriptor(project, vf, (loc.line - 1).coerceAtLeast(0), 0).navigate(true); true
+        }.getOrDefault(false)
     }
 
     fun component(): JComponent = this
@@ -222,13 +233,20 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
                 }
                 is SquishReportNode.Entry -> {
                     if (obj.level == SquishLogLevel.TRACEBACK) {
-                        font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
                         append(obj.message, SimpleTextAttributes.GRAYED_ATTRIBUTES)
                     } else {
                         icon = iconFor(obj.level)
                         append("${obj.level}: ", attributesFor(obj.level))
                         append(obj.message, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                        obj.detail?.let { append("  ($it)", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES) }
+                        obj.detail?.let { detail ->
+                            // A resolvable script location renders as a link (double-click to open).
+                            val attr = if (SquishScriptLocator.parse(detail) != null) {
+                                SimpleTextAttributes.LINK_ATTRIBUTES
+                            } else {
+                                SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES
+                            }
+                            append("  ($detail)", attr)
+                        }
                     }
                 }
                 is SquishReportNode.Image -> {

@@ -98,28 +98,43 @@ persisted application-wide in `pysquish.xml`):
 - **Report generator (XML)** — the Squish XML generator PySquish adds for the
   Report tab / verdicts (default `xml3.4`). Must be one your `squishrunner`
   supports; use a native XML format (not `xmljunit`) so sections are preserved.
+- **Screenshots directory** — where Squish writes failure screenshots (e.g. an
+  AppData results path). When set, the Report tab looks there (searched
+  recursively for `failed_*.png`) so screenshots stay in AppData instead of the
+  repo. Blank = look in the suite/test `failedImages/` folders.
 - **Debug host / port** and **pydevd_pycharm path** — see *Debugging*.
+
+Console output is always decoded as **UTF-8** (and `PYTHONIOENCODING=utf-8` is
+set) so accented characters (é, è, …) render correctly.
 
 ## Usage
 
 1. Open a project containing Squish suites.
 2. Open the **PySquish** tool window (bottom).
 3. It scans for suites automatically; the toolbar **Refresh** rescans.
-4. Pick a suite in the combo box. Each test case shows **Run** and **Debug**
-   buttons; the toolbar has **Run Whole Suite**, **Stop**, and a **Settings**
-   shortcut. After a run, each test shows its last verdict — a green ✓ (OK) or
-   red ✗ (KO) — next to its name (session-only).
+4. Pick a suite in the combo box. Each test row has a **checkbox** (ticked by
+   default) at the start, the test name with its last verdict — green ✓ (OK) or
+   red ✗ (KO), session-only — and compact **Run** / **Debug** buttons. The
+   toolbar has **Run Whole Suite**, **Run Checked** (runs every ticked test one
+   after another), **Stop**, and a **Settings** shortcut.
 5. The right side has two tabs:
    - **Console** — live `squishrunner` output, colored by level (`PASS` green,
-     `FAIL`/`ERROR` red, `WARNING` orange, `INFO` blue, `LOG` grey).
+     `FAIL`/`ERROR` red, `WARNING` orange, `INFO` blue, `LOG` grey). A **Show:**
+     filter bar (Log / Pass / Warning / Error·Fail) toggles which levels are visible.
+     Each line derived from Squish `startSection` traces is tagged `P<phase>-S<step>`
+     (abbreviated, between the timestamp and the log type; nothing when outside a
+     section). Script **locations are clickable** and open the matching script in
+     the project (resolved by file name, so the repo copy — not the absolute log
+     path — is opened).
    - **Report** — a foldable tree parsed from the Squish `xml3.4` report
      (`<test type="section">` become collapsible layers, nested to any depth;
      entries are iconed/colored by type). On failure it **unfolds down to each
      error** and scrolls to the first. A trailing Python **traceback** is shown
-     as its own monospace, foldable block (the exception line stays red). Any
-     node is **copyable** (Ctrl/Cmd+C or right-click). A failure **screenshot**
-     (`failedImages/failed_*.png`, under the test or suite dir) appears as an
-     image node you can double-click to open.
+     as its own foldable block (the exception line stays red). Entry **locations
+     are clickable links** (double-click opens the repo script). Any node is
+     **copyable** (Ctrl/Cmd+C or right-click). Failure **screenshots**
+     (`failed_*.png`, from the configured *Screenshots directory* or the
+     `failedImages/` folders) appear as image nodes you can double-click to open.
 
 ## How discovery works
 
@@ -154,11 +169,14 @@ setting (default `xml3.4`); it must be a Squish-native XML format your
 optionally starts the server and launches the runner with an `OSProcessHandler`.
 Instead of a raw `attachToProcess`, a
 [SquishConsolePrinter](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt)
-buffers output into whole lines and prints each in a level-based color. When the
+buffers output into whole lines and prints each (through
+[SquishConsole](src/main/kotlin/com/pysquish/execution/SquishConsole.kt), which
+remembers lines so the level filter can re-render) in a level-based color. When the
 process ends it parses the temp `xml3.4` report
 ([report/](src/main/kotlin/com/pysquish/report/)), pushes it to the Report tab and
-the per-test badges, tears down the server, and (for debug runs) stops the Python
-Debug Server. One run is active at a time.
+the per-test badges, tears down the server, (for debug runs) stops the Python
+Debug Server, and **deletes the temp `pysquish-report` and `pysquish-debug`
+directories**. One run is active at a time.
 
 ## Debugging (PyCharm debugger ↔ Squish Python)
 
@@ -210,7 +228,9 @@ Squish runs its own embedded Python, so the integration uses the standard
 | Settings (model + UI) | [settings/](src/main/kotlin/com/pysquish/settings/) |
 | Suite/test discovery | [model/](src/main/kotlin/com/pysquish/model/) |
 | Command building + execution | [execution/](src/main/kotlin/com/pysquish/execution/) |
-| Console coloring | [execution/SquishConsolePrinter.kt](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt) |
+| Console coloring / buffering | [SquishConsolePrinter.kt](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt), [SquishConsole.kt](src/main/kotlin/com/pysquish/execution/SquishConsole.kt) |
+| Phase/Step (PX-SX) tracking | [execution/SquishSectionTracker.kt](src/main/kotlin/com/pysquish/execution/SquishSectionTracker.kt) |
+| Clickable script locations | [SquishScriptLocator.kt](src/main/kotlin/com/pysquish/execution/SquishScriptLocator.kt), [SquishLocationFilter.kt](src/main/kotlin/com/pysquish/execution/SquishLocationFilter.kt) |
 | Report model + xml3.4 parser | [report/](src/main/kotlin/com/pysquish/report/) |
 | Debugger integration | [debug/SquishDebugSupport.kt](src/main/kotlin/com/pysquish/debug/SquishDebugSupport.kt) |
 | Tool window UI (+ Report tab, badges) | [toolwindow/](src/main/kotlin/com/pysquish/toolwindow/) |

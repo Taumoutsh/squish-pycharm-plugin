@@ -4,13 +4,12 @@ import com.intellij.execution.RunManager
 import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.execution.executors.DefaultDebugExecutor
 import com.intellij.execution.runners.ExecutionUtil
-import com.intellij.execution.ui.ConsoleView
-import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.pysquish.execution.SquishConsole
 import com.pysquish.settings.SquishSettings
 import java.nio.file.Files
 import java.nio.file.Path
@@ -38,9 +37,13 @@ object SquishDebugSupport {
     /** Display name of the Python Debug Server run content PySquish starts. */
     private const val DEBUG_SERVER_NAME = "PySquish Debug Server"
 
-    data class Setup(val environment: Map<String, String>, val pythonPath: List<String>)
+    data class Setup(
+        val environment: Map<String, String>,
+        val pythonPath: List<String>,
+        val bootstrapDir: Path?,
+    )
 
-    fun prepare(project: Project, console: ConsoleView): Setup {
+    fun prepare(project: Project, console: SquishConsole): Setup {
         val settings = SquishSettings.state()
         val host = settings.debugHost?.takeIf { it.isNotBlank() } ?: "127.0.0.1"
         val port = settings.debugPort
@@ -52,11 +55,10 @@ object SquishDebugSupport {
             add(bootstrapDir.toString())
             resolvePydevdDir(settings.pydevdPath)?.let {
                 add(it.toString())
-                console.print("[PySquish] Using pydevd from: $it\n", ConsoleViewContentType.SYSTEM_OUTPUT)
-            } ?: console.print(
+                console.printSystem("[PySquish] Using pydevd from: $it\n")
+            } ?: console.printWarning(
                 "[PySquish] WARNING: pydevd_pycharm not located. Set 'pydevd_pycharm path' in settings " +
                     "or `pip install pydevd-pycharm` into the Squish interpreter.\n",
-                ConsoleViewContentType.LOG_WARNING_OUTPUT,
             )
         }
 
@@ -66,12 +68,11 @@ object SquishDebugSupport {
             "PYSQUISH_DEBUG_PORT" to port.toString(),
         )
 
-        console.print(
+        console.printSystem(
             "[PySquish] Debug attach configured for $host:$port. " +
                 "Set breakpoints in your test scripts; the run will pause when they are hit.\n\n",
-            ConsoleViewContentType.SYSTEM_OUTPUT,
         )
-        return Setup(env, pythonPath)
+        return Setup(env, pythonPath, bootstrapDir)
     }
 
     /**
@@ -79,7 +80,7 @@ object SquishDebugSupport {
      * connects. Best-effort: if the configuration type cannot be found or started,
      * prints manual instructions and continues.
      */
-    private fun startDebugServer(project: Project, console: ConsoleView, host: String, port: Int) {
+    private fun startDebugServer(project: Project, console: SquishConsole, host: String, port: Int) {
         val type = findRemoteDebugType()
         if (type == null) {
             printManualServerHelp(console, port)
@@ -101,10 +102,7 @@ object SquishDebugSupport {
                     printManualServerHelp(console, port)
                 }
             }
-            console.print(
-                "[PySquish] Starting Python Debug Server on port $port...\n",
-                ConsoleViewContentType.SYSTEM_OUTPUT,
-            )
+            console.printSystem("[PySquish] Starting Python Debug Server on port $port...\n")
         } catch (e: Exception) {
             LOG.info("Could not auto-start Python Debug Server", e)
             printManualServerHelp(console, port)
@@ -169,11 +167,10 @@ object SquishDebugSupport {
         if (!hostSet) LOG.info("Could not set host on ${cls.name}; PyCharm will show its default.")
     }
 
-    private fun printManualServerHelp(console: ConsoleView, port: Int) {
-        console.print(
+    private fun printManualServerHelp(console: SquishConsole, port: Int) {
+        console.printWarning(
             "[PySquish] Could not auto-start the Python Debug Server. Create a run configuration of type " +
                 "'Python Debug Server' listening on port $port and start it manually, then re-run in debug mode.\n",
-            ConsoleViewContentType.LOG_WARNING_OUTPUT,
         )
     }
 

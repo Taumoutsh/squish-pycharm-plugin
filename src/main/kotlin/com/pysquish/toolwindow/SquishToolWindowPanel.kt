@@ -1,7 +1,5 @@
 package com.pysquish.toolwindow
 
-import com.intellij.execution.filters.TextConsoleBuilderFactory
-import com.intellij.execution.ui.ConsoleView
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
@@ -21,12 +19,16 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.intellij.ui.components.JBTabbedPane
+import com.pysquish.execution.SquishConsole
 import com.pysquish.execution.SquishTestRunner
 import com.pysquish.model.SquishProjectScanner
 import com.pysquish.model.SquishSuite
+import com.pysquish.model.SquishTest
+import com.pysquish.report.SquishLogLevel
 import com.pysquish.report.SquishReportNode
 import com.pysquish.report.SquishRunReport
 import com.pysquish.report.SquishVerdict
+import com.pysquish.settings.SquishSettings
 import com.pysquish.settings.SquishSettingsConfigurable
 import java.awt.BorderLayout
 import java.nio.file.Files
@@ -37,6 +39,7 @@ import java.awt.Dimension
 import java.awt.FlowLayout
 import javax.swing.BoxLayout
 import javax.swing.JButton
+import javax.swing.JCheckBox
 import javax.swing.JComboBox
 import javax.swing.JPanel
 import javax.swing.SwingConstants
@@ -48,8 +51,7 @@ import javax.swing.SwingConstants
 class SquishToolWindowPanel(private val project: Project) :
     SimpleToolWindowPanel(false, true), com.intellij.openapi.Disposable {
 
-    private val console: ConsoleView =
-        TextConsoleBuilderFactory.getInstance().createBuilder(project).console
+    private val console = SquishConsole(project)
 
     private val runner = SquishTestRunner(project, console)
 
@@ -59,6 +61,19 @@ class SquishToolWindowPanel(private val project: Project) :
     private val testListPanel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
     private val statusLabel = JBLabel("No suites loaded. Click Refresh.")
     private val runButtons = mutableListOf<JButton>()
+
+    /** Whether each test's checkbox is ticked, keyed by test directory (default true). */
+    private val checkedState = HashMap<Path, Boolean>()
+
+    /** Tests queued by "Run Checked", executed one after another. */
+    private val runQueue = ArrayDeque<SquishTest>()
+    private var queueSuite: SquishSuite? = null
+
+    // Console level filter checkboxes.
+    private val showLog = JCheckBox("Log", true)
+    private val showPass = JCheckBox("Pass", true)
+    private val showWarning = JCheckBox("Warning", true)
+    private val showError = JCheckBox("Error/Fail", true)
 
     /** Last verdict per test, keyed by test directory. Session-only. */
     private val verdicts = HashMap<Path, SquishVerdict>()
@@ -73,6 +88,9 @@ class SquishToolWindowPanel(private val project: Project) :
         runner.stateListener = { isRunning ->
             running = isRunning
             updateControlsEnabled()
+            if (!isRunning && queueSuite != null) {
+                ApplicationManager.getApplication().invokeLater { runNextInQueue() }
+            }
         }
         runner.reportListener = { report -> onReport(report) }
 
@@ -97,8 +115,19 @@ class SquishToolWindowPanel(private val project: Project) :
                 }
                 override fun getActionUpdateThread() = com.intellij.openapi.actionSystem.ActionUpdateThread.EDT
             })
+            add(object : AnAction("Run Checked", "Run all checked tests one after another", AllIcons.Actions.RunAll) {
+                override fun actionPerformed(e: AnActionEvent) = runChecked()
+                override fun update(e: AnActionEvent) {
+                    e.presentation.isEnabled = !running && selectedSuite()?.tests?.any { isChecked(it) } == true
+                }
+                override fun getActionUpdateThread() = com.intellij.openapi.actionSystem.ActionUpdateThread.EDT
+            })
             add(object : AnAction("Stop", "Stop the running Squish test", AllIcons.Actions.Suspend) {
-                override fun actionPerformed(e: AnActionEvent) = runner.stop()
+                override fun actionPerformed(e: AnActionEvent) {
+                    runQueue.clear()
+                    queueSuite = null
+                    runner.stop()
+                }
                 override fun update(e: AnActionEvent) {
                     e.presentation.isEnabled = running
                 }
@@ -135,7 +164,7 @@ class SquishToolWindowPanel(private val project: Project) :
         }
 
         val tabs = JBTabbedPane().apply {
-            addTab("Console", console.component)
+            addTab("Console", createConsolePanel())
             addTab("Report", reportPanel.component())
         }
 
@@ -144,6 +173,31 @@ class SquishToolWindowPanel(private val project: Project) :
         splitter.secondComponent = tabs
 
         return JPanel(BorderLayout()).apply { add(splitter, BorderLayout.CENTER) }
+    }
+
+    /** Console tab: a level-filter bar on top of the streaming console. */
+    private fun createConsolePanel(): JPanel {
+        val filterBar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
+            add(JBLabel("Show:"))
+            listOf(showLog, showPass, showWarning, showError).forEach { cb ->
+                cb.addActionListener { applyConsoleFilter() }
+                add(cb)
+            }
+        }
+        return JPanel(BorderLayout()).apply {
+            add(filterBar, BorderLayout.NORTH)
+            add(console.view.component, BorderLayout.CENTER)
+        }
+    }
+
+    private fun applyConsoleFilter() {
+        val levels = buildSet {
+            if (showLog.isSelected) addAll(SquishConsole.LOG_GROUP)
+            if (showPass.isSelected) addAll(SquishConsole.PASS_GROUP)
+            if (showWarning.isSelected) addAll(SquishConsole.WARNING_GROUP)
+            if (showError.isSelected) addAll(SquishConsole.ERROR_GROUP)
+        }
+        console.setVisibleLevels(levels)
     }
 
     /** Starts a run and remembers the suite so we can map report verdicts back. */
@@ -167,30 +221,46 @@ class SquishToolWindowPanel(private val project: Project) :
         rebuildTestList()
     }
 
-    /** Adds any `failedImages/failed_*.png` (under the test or suite dir) to a failed test. */
+    /**
+     * Attaches failure screenshots (`failed_*.png`) to a failed test. Prefers the
+     * configured screenshots directory (kept in AppData, searched recursively);
+     * when it is blank, falls back to the repo `failedImages/` folders.
+     */
     private fun attachScreenshots(
         report: com.pysquish.report.SquishTestReport,
         test: com.pysquish.model.SquishTest,
         suite: SquishSuite,
     ) {
         val pattern = Regex("failed_.*\\.png", RegexOption.IGNORE_CASE)
-        val images = listOf(test.directory, suite.directory)
-            .map { it.resolve("failedImages") }
-            .filter { Files.isDirectory(it) }
-            .flatMap { dir ->
-                runCatching {
-                    Files.list(dir).use { stream ->
-                        stream.filter { Files.isRegularFile(it) && pattern.matches(it.fileName.toString()) }
-                            .sorted()
-                            .toList()
-                    }
-                }.getOrDefault(emptyList())
-            }
-            .distinct()
+        val configured = SquishSettings.state().screenshotsDir?.trim().orEmpty()
+
+        val all = if (configured.isNotEmpty()) {
+            walkImages(Path.of(configured), pattern)
+        } else {
+            listOf(test.directory, suite.directory)
+                .map { it.resolve("failedImages") }
+                .flatMap { walkImages(it, pattern) }
+        }.distinct()
+
+        // Prefer images whose path mentions this test; otherwise attach all found.
+        val forTest = all.filter { it.toString().contains(test.name, ignoreCase = true) }
+        val images = forTest.ifEmpty { all }
         if (images.isEmpty()) return
+
         val section = SquishReportNode.Section(title = "Screenshots")
         images.forEach { section.children.add(SquishReportNode.Image(it)) }
         report.root.children.add(section)
+    }
+
+    private fun walkImages(dir: Path, pattern: Regex): List<Path> {
+        if (!Files.isDirectory(dir)) return emptyList()
+        return runCatching {
+            Files.walk(dir).use { stream ->
+                stream.filter { Files.isRegularFile(it) && pattern.matches(it.fileName.toString()) }
+                    .sorted()
+                    .toList()
+            }
+        }.getOrDefault(emptyList())
     }
 
     /** The report may name a test by full path or with different casing. */
@@ -254,10 +324,19 @@ class SquishToolWindowPanel(private val project: Project) :
         }
 
         for (test in suite.tests) {
-            val row = JPanel(BorderLayout(8, 0)).apply {
-                border = JBUI.Borders.empty(3, 2)
-                maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(34))
+            val row = JPanel(BorderLayout(6, 0)).apply {
+                border = JBUI.Borders.empty(0, 2)
+                maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(30))
             }
+
+            val check = JCheckBox().apply {
+                isSelected = checkedState.getOrDefault(test.directory, true)
+                toolTipText = "Include in 'Run Checked'"
+                isBorderPainted = false
+                margin = JBUI.insets(0)
+                addActionListener { checkedState[test.directory] = isSelected }
+            }
+            row.add(check, BorderLayout.WEST)
 
             val name = JBLabel(test.name).apply {
                 icon = statusIcon(test)
@@ -270,17 +349,12 @@ class SquishToolWindowPanel(private val project: Project) :
             }
             row.add(name, BorderLayout.CENTER)
 
-            val buttons = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-            val runBtn = JButton(AllIcons.Actions.Execute).apply {
-                toolTipText = "Run ${test.name}"
-                margin = JBUI.insets(2)
-                addActionListener { launch(suite, test, debug = false) }
-            }
-            val debugBtn = JButton(AllIcons.Actions.StartDebugger).apply {
-                toolTipText = "Debug ${test.name} (PyCharm debugger attached)"
-                margin = JBUI.insets(2)
-                addActionListener { launch(suite, test, debug = true) }
-            }
+            val buttons = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
+            val runBtn = compactButton(AllIcons.Actions.Execute, "Run ${test.name}") { launch(suite, test, debug = false) }
+            val debugBtn = compactButton(
+                AllIcons.Actions.StartDebugger,
+                "Debug ${test.name} (PyCharm debugger attached)",
+            ) { launch(suite, test, debug = true) }
             runButtons.add(runBtn)
             runButtons.add(debugBtn)
             buttons.add(runBtn)
@@ -300,6 +374,39 @@ class SquishToolWindowPanel(private val project: Project) :
     private fun runSelectedSuite(debug: Boolean) {
         val suite = selectedSuite() ?: return
         launch(suite, null, debug)
+    }
+
+    private fun compactButton(icon: Icon, tip: String, action: () -> Unit): JButton =
+        JButton(icon).apply {
+            toolTipText = tip
+            margin = JBUI.insets(0)
+            isFocusable = false
+            preferredSize = Dimension(JBUI.scale(28), JBUI.scale(28))
+            addActionListener { action() }
+        }
+
+    private fun isChecked(test: SquishTest): Boolean = checkedState.getOrDefault(test.directory, true)
+
+    /** Queues every checked, runnable test in the selected suite and runs them in order. */
+    private fun runChecked() {
+        val suite = selectedSuite() ?: return
+        if (running) return
+        val checked = suite.tests.filter { isChecked(it) && it.scriptFile != null }
+        if (checked.isEmpty()) return
+        runQueue.clear()
+        runQueue.addAll(checked)
+        queueSuite = suite
+        runNextInQueue()
+    }
+
+    private fun runNextInQueue() {
+        val suite = queueSuite ?: return
+        val next = runQueue.removeFirstOrNull()
+        if (next == null) {
+            queueSuite = null
+            return
+        }
+        launch(suite, next, debug = false)
     }
 
     private fun selectedSuite(): SquishSuite? = suiteCombo.selectedItem as? SquishSuite

@@ -5,8 +5,6 @@ import com.intellij.execution.process.OSProcessHandler
 import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
-import com.intellij.execution.ui.ConsoleView
-import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
@@ -21,13 +19,13 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Orchestrates a single Squish run: optionally starts a squishserver, launches
- * squishrunner, and streams all output into the given [ConsoleView].
+ * squishrunner, and streams all output into the given [SquishConsole].
  *
  * Only one run is active at a time per instance.
  */
 class SquishTestRunner(
     private val project: Project,
-    private val console: ConsoleView,
+    private val console: SquishConsole,
 ) {
     private val LOG = logger<SquishTestRunner>()
 
@@ -40,6 +38,9 @@ class SquishTestRunner(
     @Volatile
     private var reportDir: Path? = null
 
+    @Volatile
+    private var debugBootstrapDir: Path? = null
+
     val isRunning: Boolean get() = activeRunner.get()?.let { !it.isProcessTerminated } == true
 
     /** Listener notified when a run starts/finishes so the UI can toggle buttons. */
@@ -50,11 +51,11 @@ class SquishTestRunner(
 
     fun run(suite: SquishSuite, test: SquishTest?, debug: Boolean) {
         if (isRunning) {
-            console.print("A Squish test is already running.\n", ConsoleViewContentType.ERROR_OUTPUT)
+            console.printError("A Squish test is already running.\n")
             return
         }
 
-        console.clear()
+        console.clearAll()
         notifyState(true)
         debugActive = debug
 
@@ -65,9 +66,11 @@ class SquishTestRunner(
                 val setup = SquishDebugSupport.prepare(project, console)
                 debugEnv = setup.environment
                 extraPythonPath = setup.pythonPath
+                debugBootstrapDir = setup.bootstrapDir
             } else {
                 debugEnv = emptyMap()
                 extraPythonPath = emptyList()
+                debugBootstrapDir = null
             }
 
             val dir = runCatching { Files.createTempDirectory("pysquish-report") }.getOrNull()
@@ -79,13 +82,15 @@ class SquishTestRunner(
             printCommand(command, debug)
             startRunner(command)
         } catch (e: SquishCommandBuilder.ConfigurationException) {
-            console.print("Configuration error: ${e.message}\n", ConsoleViewContentType.ERROR_OUTPUT)
+            console.printError("Configuration error: ${e.message}\n")
             stopServer()
+            cleanupDebugBootstrap()
             notifyState(false)
         } catch (e: Exception) {
             LOG.warn("Failed to start Squish run", e)
-            console.print("Failed to start: ${e.message}\n", ConsoleViewContentType.ERROR_OUTPUT)
+            console.printError("Failed to start: ${e.message}\n")
             stopServer()
+            cleanupDebugBootstrap()
             notifyState(false)
         }
     }
@@ -97,9 +102,10 @@ class SquishTestRunner(
 
     private fun maybeStartServer() {
         val serverCmd = SquishCommandBuilder.serverCommand() ?: return
-        console.print("Starting squishserver: ${serverCmd.commandLineString}\n", ConsoleViewContentType.SYSTEM_OUTPUT)
+        console.printSystem("Starting squishserver: ${serverCmd.commandLineString}\n")
         val handler = OSProcessHandler(serverCmd)
-        console.attachToProcess(handler)
+        // Route through the buffering printer so server output survives filtering.
+        handler.addProcessListener(SquishConsolePrinter(console))
         handler.startNotify()
         activeServer.set(handler)
         // Give the server a moment to bind its port before the runner connects.
@@ -112,12 +118,10 @@ class SquishTestRunner(
         handler.addProcessListener(SquishConsolePrinter(console))
         handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
-                console.print(
-                    "\nSquish runner finished with exit code ${event.exitCode}\n",
-                    ConsoleViewContentType.SYSTEM_OUTPUT,
-                )
+                console.printSystem("\nSquish runner finished with exit code ${event.exitCode}\n")
                 stopServer()
                 if (debugActive) SquishDebugSupport.stopDebugServer(project)
+                cleanupDebugBootstrap()
 
                 val report = reportDir?.let { SquishXmlReportParser.parse(it) }
                 cleanupReportDir()
@@ -131,9 +135,13 @@ class SquishTestRunner(
         handler.startNotify()
     }
 
-    private fun cleanupReportDir() {
-        val dir = reportDir ?: return
-        reportDir = null
+    private fun cleanupReportDir() = deleteRecursively(reportDir).also { reportDir = null }
+
+    /** Removes the temp `pysquish-debug` bootstrap dir created for a debug run. */
+    private fun cleanupDebugBootstrap() = deleteRecursively(debugBootstrapDir).also { debugBootstrapDir = null }
+
+    private fun deleteRecursively(dir: Path?) {
+        if (dir == null) return
         runCatching {
             Files.walk(dir).use { stream ->
                 stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
@@ -149,8 +157,8 @@ class SquishTestRunner(
 
     private fun printCommand(command: GeneralCommandLine, debug: Boolean) {
         val mode = if (debug) " (debug)" else ""
-        console.print("Running$mode: ${command.commandLineString}\n", ConsoleViewContentType.SYSTEM_OUTPUT)
-        console.print("Working dir: ${command.workDirectory}\n\n", ConsoleViewContentType.SYSTEM_OUTPUT)
+        console.printSystem("Running$mode: ${command.commandLineString}\n")
+        console.printSystem("Working dir: ${command.workDirectory}\n\n")
     }
 
     private fun notifyState(running: Boolean) {

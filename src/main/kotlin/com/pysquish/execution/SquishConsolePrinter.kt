@@ -3,7 +3,6 @@ package com.pysquish.execution
 import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessOutputTypes
-import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.util.Key
@@ -64,11 +63,16 @@ object SquishLogClassifier {
  * its Squish log level. Used instead of `ConsoleView.attachToProcess` so we
  * control per-line coloring; that also means escape codes must be stripped here
  * (the console does not decode them when we call `print`).
+ *
+ * Each line is also tagged with a `P<phase>-S<step>` marker derived from Squish
+ * `startSection` traces (see [SquishSectionTracker]), inserted between the leading
+ * timestamp and the log type.
  */
-class SquishConsolePrinter(private val console: ConsoleView) : ProcessAdapter() {
+class SquishConsolePrinter(private val console: SquishConsole) : ProcessAdapter() {
 
     private val stdout = StringBuilder()
     private val stderr = StringBuilder()
+    private val sections = SquishSectionTracker()
 
     override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
         val isError = outputType == ProcessOutputTypes.STDERR
@@ -103,15 +107,33 @@ class SquishConsolePrinter(private val console: ConsoleView) : ProcessAdapter() 
     private fun printLine(rawLine: String, isError: Boolean) {
         val line = unescape(stripControl(rawLine))
         val level = SquishLogClassifier.classify(line)
+        val prefix = if (line.isBlank()) null else sections.prefixFor(line)
+        val display = insertSectionTag(line, prefix)
         val contentType = when {
             level != SquishLogLevel.UNKNOWN -> SquishConsoleColors.contentType(level)
             isError -> ConsoleViewContentType.ERROR_OUTPUT
             else -> ConsoleViewContentType.NORMAL_OUTPUT
         }
-        console.print(line, contentType)
+        console.printClassified(display, level, contentType)
     }
 
     companion object {
+        // Leading timestamp such as "10:23:45", "10:23:45.123" or "2024-01-15T10:23:45 ".
+        private val TIMESTAMP_PREFIX =
+            Regex("^(\\s*(?:\\d{4}-\\d{2}-\\d{2}[T ])?\\d{1,2}:\\d{2}:\\d{2}(?:[.,]\\d+)?\\s+)")
+
+        /** Inserts the `P?-S?` tag right after the timestamp (or at the start). */
+        fun insertSectionTag(line: String, tag: String?): String {
+            if (tag.isNullOrEmpty()) return line
+            val m = TIMESTAMP_PREFIX.find(line)
+            return if (m != null) {
+                val end = m.range.last + 1
+                line.substring(0, end) + tag + " " + line.substring(end)
+            } else {
+                "$tag $line"
+            }
+        }
+
         // ESC (\x1B) + CSI sequence (colors, cursor moves, ...), or a stray ESC.
         private val ANSI = Regex("\\x1B\\[[0-9;?]*[ -/]*[@-~]|\\x1B")
 

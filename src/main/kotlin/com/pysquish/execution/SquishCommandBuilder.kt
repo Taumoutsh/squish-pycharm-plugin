@@ -4,6 +4,7 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.pysquish.model.SquishSuite
 import com.pysquish.model.SquishTest
 import com.pysquish.settings.SquishSettings
+import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 
 /**
@@ -38,6 +39,9 @@ object SquishCommandBuilder {
 
         val cmd = GeneralCommandLine(runner)
         cmd.withWorkDirectory(suite.directory.toFile())
+        // Decode squishrunner output as UTF-8 so accented characters (é, è, …)
+        // render correctly, and ask Python to emit UTF-8 too.
+        cmd.charset = StandardCharsets.UTF_8
 
         // Connection options must precede --testsuite/--testcase; squishrunner
         // rejects --host/--port that come after the suite. A blank host is
@@ -83,6 +87,7 @@ object SquishCommandBuilder {
             )
         }
         return GeneralCommandLine(server).apply {
+            charset = StandardCharsets.UTF_8
             addParameter("--port")
             addParameter(settings.serverPort.toString())
         }
@@ -93,6 +98,8 @@ object SquishCommandBuilder {
         debugEnv: Map<String, String>,
         extraPythonPath: List<String>,
     ) {
+        // Make the embedded Python emit UTF-8 regardless of the OS locale.
+        cmd.environment.putIfAbsent("PYTHONIOENCODING", "utf-8")
         if (extraPythonPath.isNotEmpty()) {
             val existing = System.getenv("PYTHONPATH")
             val merged = (extraPythonPath + listOfNotNull(existing))

@@ -71,6 +71,16 @@ class SquishSettingsConfigurable : BoundConfigurable("PySquish") {
                             "Must be one your squishrunner supports (a native XML format, not xmljunit).",
                     )
             }
+            row("Screenshots directory:") {
+                cell(directoryChooser("Select Screenshots Directory"))
+                    .bindText({ state.screenshotsDir ?: "" }, { state.screenshotsDir = it })
+                    .comment(
+                        "Where Squish writes failure screenshots (e.g. an AppData results path). " +
+                            "Used for the Report tab so screenshots stay there instead of the repo. " +
+                            "Blank = look in the suite/test <code>failedImages/</code> folders.",
+                    )
+                    .align(com.intellij.ui.dsl.builder.AlignX.FILL)
+            }
         }
 
         group("Python Debugger (remote attach)") {
@@ -84,7 +94,7 @@ class SquishSettingsConfigurable : BoundConfigurable("PySquish") {
                     .bindIntText({ state.debugPort }, { state.debugPort = it })
             }
             row("pydevd_pycharm path:") {
-                cell(directoryChooser())
+                cell(directoryChooser("Select pydevd_pycharm Directory"))
                     .bindText({ state.pydevdPath ?: "" }, { state.pydevdPath = it })
                     .comment(
                         "Directory containing the <code>pydevd_pycharm</code> module. " +
@@ -106,12 +116,11 @@ class SquishSettingsConfigurable : BoundConfigurable("PySquish") {
         return field
     }
 
-    private fun directoryChooser(): TextFieldWithBrowseButton {
+    private fun directoryChooser(title: String = "Select Directory"): TextFieldWithBrowseButton {
         val field = TextFieldWithBrowseButton(JBTextField())
         field.addBrowseFolderListener(
             null,
-            FileChooserDescriptorFactory.createSingleFolderDescriptor()
-                .withTitle("Select pydevd_pycharm Directory"),
+            FileChooserDescriptorFactory.createSingleFolderDescriptor().withTitle(title),
         )
         field.preferredSize = JBUI.size(420, field.preferredSize.height)
         return field
