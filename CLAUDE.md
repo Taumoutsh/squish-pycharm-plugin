@@ -8,6 +8,15 @@ Python debugger to the running test so breakpoints are honored.
 
 ## Status
 
+v0.3.0 — adds **suite / test scaffolding**: a **+ Add a suite…** button (next to
+the suite combo) and a **+ Add a test…** button create a new `suite_<name>`
+(with a generated `suite.conf`) or a new `tst_<name>` test case, the latter
+registered in `suite.conf`'s `TEST_CASES`. `suite.conf` comes from a built-in
+template; the test **script** is rendered from a user-editable **Mustache**
+template (bundled default at
+[templates/test.py.mustache](src/main/resources/templates/test.py.mustache),
+overridable in Settings). See *Creating suites and tests* below.
+
 v0.2.0 — adds per-test result badges, a colored console, a structured **Report**
 tab (parsed from the Squish `xml3.4` report), and automatic teardown of the
 Python Debug Server when a run ends. Builds with `./gradlew buildPlugin`. The
@@ -102,6 +111,12 @@ persisted application-wide in `pysquish.xml`):
   AppData results path). When set, the Report tab looks there (searched
   recursively for `failed_*.png`) so screenshots stay in AppData instead of the
   repo. Blank = look in the suite/test `failedImages/` folders.
+- **Test script template (.mustache)** — the Mustache template used by
+  **+ Add a test…**. Blank = the bundled
+  [templates/test.py.mustache](src/main/resources/templates/test.py.mustache).
+  Placeholders: `{{testName}}`, `{{suiteName}}`, `{{aut}}`, `{{language}}`,
+  `{{date}}`, and the `{{#hasAut}}…{{/hasAut}}` section (true when the suite has
+  an AUT). See *Creating suites and tests*.
 - **Debug host / port** and **pydevd_pycharm path** — see *Debugging*.
 
 Console output is always decoded as **UTF-8** (and `PYTHONIOENCODING=utf-8` is
@@ -135,6 +150,37 @@ set) so accented characters (é, è, …) render correctly.
      **copyable** (Ctrl/Cmd+C or right-click). Failure **screenshots**
      (`failed_*.png`, from the configured *Screenshots directory* or the
      `failedImages/` folders) appear as image nodes you can double-click to open.
+
+## Creating suites and tests
+
+Two buttons in the tool window scaffold new Squish artifacts
+([SquishScaffolder](src/main/kotlin/com/pysquish/model/SquishScaffolder.kt)):
+
+- **+ Add a suite…** (right of the suite combo) opens
+  [NewSuiteDialog](src/main/kotlin/com/pysquish/toolwindow/NewSuiteDialog.kt):
+  a **name**, an optional **AUT**, and a **location** (folder chooser, defaults
+  to the project base). It creates `<location>/suite_<name>/` with a generated
+  `suite.conf` (`AUT`, `LANGUAGE=Python`, `OBJECTMAPSTYLE=script`, `VERSION=3`,
+  `WRAPPERS=Qt`). The `suite_` prefix is added if you omit it.
+- **+ Add a test…** (bottom-left, enabled once a suite is selected) prompts for
+  a **name** and creates `tst_<name>/` with a rendered script, then registers
+  `tst_<name>` in the suite's `suite.conf` `TEST_CASES` (creating that line, in
+  alphabetical key order, if it was absent). The `tst_` prefix is added if you
+  omit it.
+
+`suite.conf` is produced from a built-in string template; the test **script** is
+rendered with **Mustache** ([jmustache](https://github.com/samskivert/jmustache),
+bundled in the plugin). The template is the *Test script template* setting or,
+when blank, the bundled
+[templates/test.py.mustache](src/main/resources/templates/test.py.mustache).
+The template context is `{{testName}}` (e.g. `tst_login`), `{{suiteName}}`,
+`{{aut}}` (defaulted from the suite's `AUT`), `{{language}}`, `{{date}}`, and the
+boolean section `{{#hasAut}}…{{/hasAut}}`. After creation PySquish refreshes the
+VFS, opens the new file in the editor, and reselects the suite. Names are
+restricted to `[A-Za-z0-9_-]` (no spaces); existing folders are never
+overwritten. The pure helpers (name prefixing, `suite.conf` building,
+`TEST_CASES` editing, rendering) are unit-tested in
+[SquishScaffolderTest](src/test/kotlin/com/pysquish/model/SquishScaffolderTest.kt).
 
 ## How discovery works
 
@@ -227,6 +273,7 @@ Squish runs its own embedded Python, so the integration uses the standard
 | Plugin manifest | [plugin.xml](src/main/resources/META-INF/plugin.xml) |
 | Settings (model + UI) | [settings/](src/main/kotlin/com/pysquish/settings/) |
 | Suite/test discovery | [model/](src/main/kotlin/com/pysquish/model/) |
+| Suite/test scaffolding | [SquishScaffolder.kt](src/main/kotlin/com/pysquish/model/SquishScaffolder.kt), [NewSuiteDialog.kt](src/main/kotlin/com/pysquish/toolwindow/NewSuiteDialog.kt), [test.py.mustache](src/main/resources/templates/test.py.mustache) |
 | Command building + execution | [execution/](src/main/kotlin/com/pysquish/execution/) |
 | Console coloring / buffering | [SquishConsolePrinter.kt](src/main/kotlin/com/pysquish/execution/SquishConsolePrinter.kt), [SquishConsole.kt](src/main/kotlin/com/pysquish/execution/SquishConsole.kt) |
 | Phase/Step (PX-SX) tracking | [execution/SquishSectionTracker.kt](src/main/kotlin/com/pysquish/execution/SquishSectionTracker.kt) |

@@ -7,13 +7,20 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.ui.InputValidator
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -22,6 +29,7 @@ import com.intellij.ui.components.JBTabbedPane
 import com.pysquish.execution.SquishConsole
 import com.pysquish.execution.SquishTestRunner
 import com.pysquish.model.SquishProjectScanner
+import com.pysquish.model.SquishScaffolder
 import com.pysquish.model.SquishSuite
 import com.pysquish.model.SquishTest
 import com.pysquish.report.SquishLogLevel
@@ -61,6 +69,17 @@ class SquishToolWindowPanel(private val project: Project) :
     private val testListPanel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
     private val statusLabel = JBLabel("No suites loaded. Click Refresh.")
     private val runButtons = mutableListOf<JButton>()
+
+    private val addSuiteButton = JButton("+ Add a suite…").apply {
+        toolTipText = "Create a new Squish test suite from a template"
+        isFocusable = false
+        addActionListener { onAddSuite() }
+    }
+    private val addTestButton = JButton("+ Add a test…").apply {
+        toolTipText = "Add a new test case to the selected suite"
+        isFocusable = false
+        addActionListener { onAddTest() }
+    }
 
     /** Whether each test's checkbox is ticked, keyed by test directory (default true). */
     private val checkedState = HashMap<Path, Boolean>()
@@ -153,13 +172,17 @@ class SquishToolWindowPanel(private val project: Project) :
             val top = JPanel(BorderLayout(6, 6))
             top.add(JBLabel("Suite:"), BorderLayout.WEST)
             top.add(suiteCombo, BorderLayout.CENTER)
+            top.add(addSuiteButton, BorderLayout.EAST)
             add(top, BorderLayout.NORTH)
 
             val scroll = JBScrollPane(testListPanel)
             scroll.border = JBUI.Borders.emptyTop(6)
             add(scroll, BorderLayout.CENTER)
 
-            add(statusLabel, BorderLayout.SOUTH)
+            val south = JPanel(BorderLayout(6, 0)).apply { border = JBUI.Borders.emptyTop(6) }
+            south.add(addTestButton, BorderLayout.WEST)
+            south.add(statusLabel, BorderLayout.CENTER)
+            add(south, BorderLayout.SOUTH)
             preferredSize = Dimension(320, preferredSize.height)
         }
 
@@ -279,7 +302,7 @@ class SquishToolWindowPanel(private val project: Project) :
         else -> AllIcons.RunConfigurations.TestNotRan
     }
 
-    private fun loadSuites() {
+    private fun loadSuites(selectDir: Path? = null) {
         statusLabel.text = "Scanning for Squish suites…"
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Scanning for Squish suites", false) {
             private var found: List<SquishSuite> = emptyList()
@@ -289,13 +312,13 @@ class SquishToolWindowPanel(private val project: Project) :
             }
 
             override fun onSuccess() {
-                ApplicationManager.getApplication().invokeLater { populateSuites(found) }
+                ApplicationManager.getApplication().invokeLater { populateSuites(found, selectDir) }
             }
         })
     }
 
-    private fun populateSuites(suites: List<SquishSuite>) {
-        val previous = selectedSuite()?.directory
+    private fun populateSuites(suites: List<SquishSuite>, selectDir: Path? = null) {
+        val previous = selectDir ?: selectedSuite()?.directory
         suiteCombo.removeAllItems()
         suites.forEach { suiteCombo.addItem(it) }
 
@@ -414,6 +437,93 @@ class SquishToolWindowPanel(private val project: Project) :
     private fun updateControlsEnabled() {
         runButtons.forEach { it.isEnabled = !running }
         suiteCombo.isEnabled = !running
+        addSuiteButton.isEnabled = !running
+        addTestButton.isEnabled = !running && selectedSuite() != null
+    }
+
+    // --- Scaffolding new suites / tests --------------------------------------
+
+    private fun onAddSuite() {
+        if (running) return
+        val dialog = NewSuiteDialog(project)
+        if (!dialog.showAndGet()) return
+        SquishScaffolder.createSuite(dialog.parentDir, dialog.suiteName, dialog.aut)
+            .onFailure { showError("Could not create suite", it) }
+            .onSuccess { suiteDir ->
+                refreshInVfs(suiteDir)
+                openInEditor(suiteDir.resolve("suite.conf"))
+                loadSuites(suiteDir)
+            }
+    }
+
+    private fun onAddTest() {
+        if (running) return
+        val suite = selectedSuite() ?: return
+        val rawName = Messages.showInputDialog(
+            project,
+            "Test name (folder created as tst_<name>):",
+            "New Test Case in ${suite.name}",
+            Messages.getQuestionIcon(),
+            "",
+            object : InputValidator {
+                override fun checkInput(input: String?): Boolean {
+                    val name = input?.trim().orEmpty()
+                    return SquishScaffolder.validateName(name) == null && !testExists(suite, name)
+                }
+                override fun canClose(input: String?): Boolean = checkInput(input)
+            },
+        )?.trim().takeUnless { it.isNullOrEmpty() } ?: return
+
+        val template = SquishScaffolder.resolveTestTemplate(SquishSettings.state().testTemplatePath)
+        SquishScaffolder.createTest(
+            suiteDir = suite.directory,
+            rawName = rawName,
+            templateText = template,
+            suiteName = suite.name,
+            aut = readAut(suite),
+            language = suite.language ?: "Python",
+        )
+            .onFailure { showError("Could not create test", it) }
+            .onSuccess { script ->
+                refreshInVfs(suite.directory)
+                openInEditor(script)
+                loadSuites(suite.directory)
+            }
+    }
+
+    private fun testExists(suite: SquishSuite, rawName: String): Boolean {
+        if (rawName.isEmpty()) return false
+        return Files.exists(suite.directory.resolve(SquishScaffolder.testDirName(rawName)))
+    }
+
+    /** Reads the `AUT=` value from a suite's `suite.conf` (blank if absent). */
+    private fun readAut(suite: SquishSuite): String = runCatching {
+        Files.readAllLines(suite.confFile).firstOrNull { line ->
+            val sep = line.indexOf('=')
+            sep > 0 && line.substring(0, sep).trim().equals("AUT", ignoreCase = true)
+        }?.substringAfter('=')?.trim().orEmpty()
+    }.getOrDefault("")
+
+    private fun showError(title: String, t: Throwable) {
+        Messages.showErrorDialog(project, t.message ?: t.toString(), title)
+    }
+
+    /**
+     * Refreshes the VFS for a freshly created path (and its ancestor tree) and
+     * returns its [VirtualFile]. The synchronous refresh fires VFS events, so on
+     * the EDT it must run inside a write action.
+     */
+    private fun refreshInVfs(path: Path): VirtualFile? =
+        WriteAction.compute<VirtualFile?, RuntimeException> {
+            val lfs = LocalFileSystem.getInstance()
+            val vf = lfs.refreshAndFindFileByNioFile(path)
+            lfs.refreshAndFindFileByNioFile(path)?.let { VfsUtil.markDirtyAndRefresh(false, true, true, it) }
+            vf
+        }
+
+    private fun openInEditor(path: Path) {
+        val vf = refreshInVfs(path) ?: return
+        FileEditorManager.getInstance(project).openFile(vf, true)
     }
 
     override fun dispose() {

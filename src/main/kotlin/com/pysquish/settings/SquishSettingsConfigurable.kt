@@ -83,6 +83,20 @@ class SquishSettingsConfigurable : BoundConfigurable("PySquish") {
             }
         }
 
+        group("New Suite / Test Templates") {
+            row("Test script template (.mustache):") {
+                cell(fileChooser("Select Test Script Template", "mustache"))
+                    .bindText({ state.testTemplatePath ?: "" }, { state.testTemplatePath = it })
+                    .comment(
+                        "Mustache template used by <b>+ Add a test…</b>. Blank = bundled default. " +
+                            "Placeholders: <code>{{testName}}</code>, <code>{{suiteName}}</code>, " +
+                            "<code>{{aut}}</code>, <code>{{language}}</code>, <code>{{date}}</code>, " +
+                            "and <code>{{#hasAut}}…{{/hasAut}}</code>.",
+                    )
+                    .align(com.intellij.ui.dsl.builder.AlignX.FILL)
+            }
+        }
+
         group("Python Debugger (remote attach)") {
             row("Debug host:") {
                 textField()
@@ -122,6 +136,18 @@ class SquishSettingsConfigurable : BoundConfigurable("PySquish") {
             null,
             FileChooserDescriptorFactory.createSingleFolderDescriptor().withTitle(title),
         )
+        field.preferredSize = JBUI.size(420, field.preferredSize.height)
+        return field
+    }
+
+    private fun fileChooser(title: String, vararg extensions: String): TextFieldWithBrowseButton {
+        val field = TextFieldWithBrowseButton(JBTextField())
+        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor()
+            .withTitle(title)
+        if (extensions.isNotEmpty()) {
+            descriptor.withFileFilter { vf -> extensions.any { vf.extension.equals(it, ignoreCase = true) } }
+        }
+        field.addBrowseFolderListener(null, descriptor)
         field.preferredSize = JBUI.size(420, field.preferredSize.height)
         return field
     }

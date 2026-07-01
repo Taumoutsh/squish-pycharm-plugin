@@ -30,6 +30,10 @@ dependencies {
         testFramework(TestFrameworkType.Platform)
     }
 
+    // Lightweight, dependency-free Mustache engine used to render new test
+    // scripts from a (user-editable) template. Bundled into the plugin's lib/.
+    implementation("com.samskivert:jmustache:1.16")
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     // The IntelliJ platform test framework's JUnit5 session listener references

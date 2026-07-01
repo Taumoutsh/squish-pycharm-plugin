@@ -62,6 +62,14 @@ class SquishSettings : PersistentStateComponent<SquishSettings.State> {
          */
         var screenshotsDir by string("")
 
+        /**
+         * Path to a Mustache (`.mustache`) template used when creating a new test
+         * script. Blank = use the bundled default (`templates/test.py.mustache`).
+         * Available placeholders: `{{testName}}`, `{{suiteName}}`, `{{aut}}`,
+         * `{{language}}`, `{{date}}`, and the `{{#hasAut}}…{{/hasAut}}` section.
+         */
+        var testTemplatePath by string("")
+
         /** Host PyCharm's Python debug server listens on for remote attach. */
         var debugHost by string("127.0.0.1")
 
