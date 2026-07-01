@@ -40,8 +40,8 @@ object SquishConsoleColors {
  * Classifies a single console line onto a [SquishLogLevel] by looking at its
  * leading tokens (tolerating a leading timestamp and simple decoration).
  *
- * TODO: tune the token set against real `squishrunner --reportgen stdout`
- * output; the level keywords live entirely in [SquishLogLevel.from].
+ * Call [SquishConsolePrinter.stripControl] first so ANSI escapes don't hide the
+ * level token. The level keywords live entirely in [SquishLogLevel.from].
  */
 object SquishLogClassifier {
     fun classify(rawLine: String): SquishLogLevel {
@@ -57,9 +57,11 @@ object SquishLogClassifier {
 }
 
 /**
- * A [ProcessAdapter] that buffers process output into whole lines and prints
- * each one to [console] with a color chosen from its Squish log level. Used
- * instead of `ConsoleView.attachToProcess` so we control per-line coloring.
+ * A [ProcessAdapter] that buffers process output into whole lines, strips ANSI
+ * escape sequences, and prints each line to [console] with a color chosen from
+ * its Squish log level. Used instead of `ConsoleView.attachToProcess` so we
+ * control per-line coloring; that also means escape codes must be stripped here
+ * (the console does not decode them when we call `print`).
  */
 class SquishConsolePrinter(private val console: ConsoleView) : ProcessAdapter() {
 
@@ -96,7 +98,8 @@ class SquishConsolePrinter(private val console: ConsoleView) : ProcessAdapter() 
         }
     }
 
-    private fun printLine(line: String, isError: Boolean) {
+    private fun printLine(rawLine: String, isError: Boolean) {
+        val line = stripControl(rawLine)
         val level = SquishLogClassifier.classify(line)
         val contentType = when {
             level != SquishLogLevel.UNKNOWN -> SquishConsoleColors.contentType(level)
@@ -104,5 +107,13 @@ class SquishConsolePrinter(private val console: ConsoleView) : ProcessAdapter() 
             else -> ConsoleViewContentType.NORMAL_OUTPUT
         }
         console.print(line, contentType)
+    }
+
+    companion object {
+        // ESC (\x1B) + CSI sequence (colors, cursor moves, ...), or a stray ESC.
+        private val ANSI = Regex("\\x1B\\[[0-9;?]*[ -/]*[@-~]|\\x1B")
+
+        /** Removes ANSI escape sequences and carriage returns for a clean line. */
+        fun stripControl(s: String): String = ANSI.replace(s.replace("\r", ""), "")
     }
 }

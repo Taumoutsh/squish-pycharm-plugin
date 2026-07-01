@@ -154,12 +154,21 @@ class SquishToolWindowPanel(private val project: Project) :
         if (report != null) {
             val suite = lastRunSuite
             report.tests.forEach { tr ->
-                val test = suite?.tests?.firstOrNull { it.name == tr.name }
+                val test = suite?.tests?.firstOrNull { matchesReportName(it, tr.name) }
                 if (test != null) verdicts[test.directory] = tr.verdict
             }
         }
         reportPanel.setReport(report)
         rebuildTestList()
+    }
+
+    /** The report may name a test by full path or with different casing. */
+    private fun matchesReportName(test: com.pysquish.model.SquishTest, reportName: String): Boolean {
+        if (reportName.isBlank()) return false
+        val leaf = reportName.trim().substringAfterLast('/').substringAfterLast('\\')
+        return test.name.equals(reportName, ignoreCase = true) ||
+            test.name.equals(leaf, ignoreCase = true) ||
+            reportName.endsWith(test.name)
     }
 
     private fun statusIcon(test: com.pysquish.model.SquishTest): Icon? = when (verdicts[test.directory]) {
