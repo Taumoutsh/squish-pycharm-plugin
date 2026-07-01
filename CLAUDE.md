@@ -8,7 +8,7 @@ Python debugger to the running test so breakpoints are honored.
 
 ## Status
 
-v0.1 — feature-complete for the original brief. **Not yet compiled on this
+v0.1.1 — feature-complete for the original brief. **Not yet compiled on this
 machine** (no JDK/Gradle was available when it was generated). Build it once in a
 JetBrains IDE or with `./gradlew buildPlugin`; expect to fix at most minor
 platform-API drift for the exact PyCharm build you target. The debugger
@@ -85,7 +85,8 @@ persisted application-wide in `pysquish.xml`):
 2. Open the **PySquish** tool window (bottom).
 3. It scans for suites automatically; the toolbar **Refresh** rescans.
 4. Pick a suite in the combo box. Each test case shows **Run** and **Debug**
-   buttons; the toolbar has **Run Whole Suite** and **Stop**.
+   buttons; the toolbar has **Run Whole Suite**, **Stop**, and a **Settings**
+   shortcut.
 5. Output streams into the console on the right.
 
 ## How discovery works
@@ -123,10 +124,12 @@ Squish runs its own embedded Python, so the integration uses the standard
    This is best-effort via the `PyRemoteDebugConfigurationType`; if it can't
    auto-start, the console prints instructions to start one manually.
 2. PySquish drops a generated `sitecustomize.py` on `PYTHONPATH` (plus a
-   `pysquish_debug` module). Because CPython's `site` initialization imports
-   `sitecustomize`, the Squish interpreter auto-attaches — **no edits to your
-   test scripts** — calling `pydevd_pycharm.settrace(host, port, suspend=False)`.
-   Breakpoints you set in the IDE then pause the run.
+   `pysquish_debug` module) and sets `PYSQUISH_DEBUG=1` for the run. Because
+   CPython's `site` initialization imports `sitecustomize`, the Squish
+   interpreter auto-attaches when that variable is set — **no edits to your
+   test scripts** — calling `pydevd_pycharm.settrace(host, port=port,
+   suspend=False)` with stdout/stderr forwarded to the IDE. Breakpoints you set
+   in the IDE then pause the run.
 3. `pydevd_pycharm` must be importable by the Squish interpreter. Set
    **pydevd_pycharm path** to a directory containing it, or
    `pip install pydevd-pycharm` into the interpreter Squish uses. PySquish also
