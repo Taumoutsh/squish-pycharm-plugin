@@ -74,7 +74,13 @@ persisted application-wide in `pysquish.xml`):
 - **squishserver executable** + **Start a local squishserver** — optional. When
   enabled, PySquish starts a `squishserver` before each run and passes
   `--host/--port` to the runner. Default is *runner-only* (off).
-- **Server host / port** — used only in server mode.
+- **Connect squishrunner to a running squishserver** — optional. Passes
+  `--host/--port` to the runner (positioned before `--testsuite`) without
+  starting a local server, e.g. to reach a squishserver you started yourself.
+  Implied when *Start a local squishserver* is on.
+- **Server host / port** — used when starting or connecting to a squishserver.
+  A blank host omits `--host` so squishrunner uses its default; only `--port`
+  is passed.
 - **Extra squishrunner args** — appended verbatim to every run (default
   `--reportgen stdout` so results land in the console).
 - **Debug host / port** and **pydevd_pycharm path** — see *Debugging*.
@@ -105,8 +111,12 @@ the first of `test.py`, `test.js`, … found in its directory. The parsed model 
 builds the command:
 
 ```
-<squishrunner> --testsuite <suiteDir> [--testcase <name>] [--host H --port P] <extra args>
+<squishrunner> [--host H --port P] --testsuite <suiteDir> [--testcase <name>] <extra args>
 ```
+
+`--host/--port` are emitted only when a squishserver is started or the *Connect
+to a running squishserver* option is enabled, and always precede `--testsuite`
+(squishrunner rejects them after the suite).
 
 run from the suite directory.
 [SquishTestRunner](src/main/kotlin/com/pysquish/execution/SquishTestRunner.kt)

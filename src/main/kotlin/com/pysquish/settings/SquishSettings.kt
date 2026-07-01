@@ -28,6 +28,13 @@ class SquishSettings : PersistentStateComponent<SquishSettings.State> {
         /** When true, the plugin starts a local squishserver before running tests. */
         var startServer by property(false)
 
+        /**
+         * When true, `--host`/`--port` are passed to squishrunner so it connects
+         * to an already-running squishserver. Starting a local server
+         * ([startServer]) implies this too.
+         */
+        var connectToServer by property(false)
+
         /** Host the runner connects to (relevant for client/server mode). */
         var serverHost by string("127.0.0.1")
 

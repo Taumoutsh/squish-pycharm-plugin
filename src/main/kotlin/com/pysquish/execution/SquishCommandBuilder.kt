@@ -34,19 +34,24 @@ object SquishCommandBuilder {
         val cmd = GeneralCommandLine(runner)
         cmd.withWorkDirectory(suite.directory.toFile())
 
+        // Connection options must precede --testsuite/--testcase; squishrunner
+        // rejects --host/--port that come after the suite. A blank host is
+        // omitted so squishrunner falls back to its own default.
+        if (settings.startServer || settings.connectToServer) {
+            settings.serverHost?.takeIf { it.isNotBlank() }?.let { host ->
+                cmd.addParameter("--host")
+                cmd.addParameter(host)
+            }
+            cmd.addParameter("--port")
+            cmd.addParameter(settings.serverPort.toString())
+        }
+
         cmd.addParameter("--testsuite")
         cmd.addParameter(suite.directory.toString())
 
         if (test != null) {
             cmd.addParameter("--testcase")
             cmd.addParameter(test.name)
-        }
-
-        if (settings.startServer) {
-            cmd.addParameter("--host")
-            cmd.addParameter(settings.serverHost ?: "127.0.0.1")
-            cmd.addParameter("--port")
-            cmd.addParameter(settings.serverPort.toString())
         }
 
         parseArgs(settings.extraRunnerArgs).forEach { cmd.addParameter(it) }

@@ -39,13 +39,23 @@ class SquishSettingsConfigurable : BoundConfigurable("PySquish") {
                 checkBox("Start a local squishserver before running tests")
                     .bindSelected({ state.startServer }, { state.startServer = it })
             }
+            row {
+                checkBox("Connect squishrunner to a running squishserver (--host/--port)")
+                    .bindSelected({ state.connectToServer }, { state.connectToServer = it })
+                    .comment(
+                        "Passes the host/port below to squishrunner (before --testsuite). " +
+                            "Implied when a local squishserver is started.",
+                    )
+            }
             row("Server host:") {
                 textField()
                     .bindText({ state.serverHost ?: "" }, { state.serverHost = it })
+                    .comment("Optional. Leave blank to omit --host (squishrunner uses its default).")
             }
             row("Server port:") {
                 intTextField(1024..65535)
                     .bindIntText({ state.serverPort }, { state.serverPort = it })
+                    .comment("squishserver port passed to squishrunner as --port.")
             }
             row("Extra squishrunner args:") {
                 textField()
