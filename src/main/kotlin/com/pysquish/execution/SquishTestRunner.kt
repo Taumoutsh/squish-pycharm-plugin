@@ -49,13 +49,18 @@ class SquishTestRunner(
     /** Notified with the parsed report (or null) after a run finishes. */
     var reportListener: ((SquishRunReport?) -> Unit)? = null
 
-    fun run(suite: SquishSuite, test: SquishTest?, debug: Boolean) {
+    /**
+     * Runs [test] (or the whole [suite] when null). [clearConsole] clears the
+     * console first; pass `false` for the 2nd… test of a "Run Checked" batch so
+     * output accumulates like a whole-suite run.
+     */
+    fun run(suite: SquishSuite, test: SquishTest?, debug: Boolean, clearConsole: Boolean = true) {
         if (isRunning) {
             console.printError("A Squish test is already running.\n")
             return
         }
 
-        console.clearAll()
+        if (clearConsole) console.clearAll()
         notifyState(true)
         debugActive = debug
 

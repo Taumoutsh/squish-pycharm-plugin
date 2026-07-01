@@ -83,6 +83,12 @@ class SquishToolWindowPanel(private val project: Project) :
     private val runQueue = ArrayDeque<SquishTest>()
     private var queueSuite: SquishSuite? = null
 
+    /** Reports accumulated across a "Run Checked" batch, shown together like a suite run. */
+    private val batchReports = mutableListOf<com.pysquish.report.SquishTestReport>()
+
+    /** True until the first test of a batch launches, so the console is cleared only once. */
+    private var batchFirst = false
+
     // Console level filter checkboxes.
     private val showLog = JCheckBox("Log", true)
     private val showPass = JCheckBox("Pass", true)
@@ -221,12 +227,21 @@ class SquishToolWindowPanel(private val project: Project) :
     }
 
     /** Starts a run and remembers the suite so we can map report verdicts back. */
-    private fun launch(suite: SquishSuite, test: com.pysquish.model.SquishTest?, debug: Boolean) {
+    private fun launch(
+        suite: SquishSuite,
+        test: com.pysquish.model.SquishTest?,
+        debug: Boolean,
+        clearConsole: Boolean = true,
+    ) {
         lastRunSuite = suite
-        runner.run(suite, test, debug)
+        runner.run(suite, test, debug, clearConsole)
     }
 
     private fun onReport(report: SquishRunReport?) {
+        // During a "Run Checked" batch the queue is still active here (this fires
+        // before runNextInQueue), so accumulate every test's report and show them
+        // together, like a whole-suite run.
+        val inBatch = queueSuite != null
         if (report != null) {
             val suite = lastRunSuite
             report.tests.forEach { tr ->
@@ -237,7 +252,13 @@ class SquishToolWindowPanel(private val project: Project) :
                 }
             }
         }
-        reportPanel.setReport(report)
+        val displayed = if (inBatch) {
+            report?.tests?.let { batchReports.addAll(it) }
+            SquishRunReport(batchReports.toList())
+        } else {
+            report
+        }
+        reportPanel.setReport(displayed)
         rebuildTestList()
     }
 
@@ -416,6 +437,8 @@ class SquishToolWindowPanel(private val project: Project) :
         runQueue.clear()
         runQueue.addAll(checked)
         queueSuite = suite
+        batchReports.clear()
+        batchFirst = true
         runNextInQueue()
     }
 
@@ -426,7 +449,10 @@ class SquishToolWindowPanel(private val project: Project) :
             queueSuite = null
             return
         }
-        launch(suite, next, debug = false)
+        // Clear the console only for the first test; the rest append to it.
+        val clearConsole = batchFirst
+        batchFirst = false
+        launch(suite, next, debug = false, clearConsole = clearConsole)
     }
 
     private fun selectedSuite(): SquishSuite? = suiteCombo.selectedItem as? SquishSuite
