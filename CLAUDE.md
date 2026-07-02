@@ -15,6 +15,14 @@ it creates lingers and release tags must be pushed from a developer machine.
 
 ## Status
 
+v0.4.0 — Report tab **accumulates across runs** (trash button clears it,
+right-click removes one test); failure **screenshots** are copied out of the temp
+report dir into a kept AppData/Temp store (cleared per run) so they survive;
+**tracebacks** render full-contrast with clickable frames; console **warning is
+yellow** with an added **Other** filter; script-link resolution disambiguates
+same-named scripts and honors `line N`. Launching **saves all documents** and
+**switches to the Console tab**; disabled buttons are visibly greyed.
+
 v0.3.0 — adds **suite / test scaffolding**: a **+ Add a suite…** button (next to
 the suite combo) and a **+ Add a test…** button create a new `suite_<name>`
 (with a generated `suite.conf`) or a new `tst_<name>` test case, the latter
@@ -114,10 +122,12 @@ persisted application-wide in `pysquish.xml`):
 - **Report generator (XML)** — the Squish XML generator PySquish adds for the
   Report tab / verdicts (default `xml3.4`). Must be one your `squishrunner`
   supports; use a native XML format (not `xmljunit`) so sections are preserved.
-- **Screenshots directory** — where Squish writes failure screenshots (e.g. an
-  AppData results path). When set, the Report tab looks there (searched
-  recursively for `failed_*.png`) so screenshots stay in AppData instead of the
-  repo. Blank = look in the suite/test `failedImages/` folders.
+- **Screenshots directory** — optional extra place to look for failure
+  screenshots (`failed_*.png`, searched recursively). By default PySquish copies
+  screenshots out of the temp `xml3.4` report dir (before that dir is deleted)
+  into a kept temp store under AppData/Temp, cleared at the start of each run —
+  so they survive for the Report tab. This setting and the suite/test
+  `failedImages/` folders are additional fallbacks.
 - **Test script template (.mustache)** — the Mustache template used by
   **+ Add a test…**. Blank = the bundled
   [templates/test.py.mustache](src/main/resources/templates/test.py.mustache).
@@ -141,25 +151,33 @@ set) so accented characters (é, è, …) render correctly.
    in the editor. A **Select all / Unselect all** button above the list toggles
    every checkbox. The toolbar has **Run Whole Suite**, **Run Checked** (runs
    every ticked test one after another), **Stop**, and a **Settings** shortcut.
+   Launching a test **saves all editor documents** first (so the latest scripts
+   run) and **switches to the Console tab**. While a run is active the Run/Debug
+   and Add-suite/Add-test buttons are disabled (visibly greyed).
 5. The right side has two tabs:
    - **Console** — live `squishrunner` output, colored by level (`PASS` green,
-     `FAIL`/`ERROR` red, `WARNING` orange, `INFO` blue, `LOG` grey). A **Show:**
-     filter bar (Log / Pass / Warning / Error·Fail) toggles which levels are visible.
+     `FAIL`/`ERROR` red, `WARNING` yellow, `INFO` blue, `LOG` grey). A **Show:**
+     filter bar (Log / Pass / Warning / Error·Fail / **Other**) toggles which
+     levels are visible; *Other* covers lines that matched no known level.
      Lines are tagged `P<phase>-S<step>` (between the timestamp and the log type):
      a log line containing `Start Section: Phase X, Step X` sets the current phase
      and step, and every following line carries the latest values until the next
      such marker (nothing before the first). Script **locations are clickable** and
-     open the matching script in the project (resolved by file name, so the repo
-     copy — not the absolute log path — is opened).
+     open the matching script in the project (resolved by file name, and
+     disambiguated by the trailing path segments so same-named `test.py` scripts
+     open the right one; a `:N` or `line N` jumps to that line).
    - **Report** — a foldable tree parsed from the Squish `xml3.4` report
      (`<test type="section">` become collapsible layers, nested to any depth;
-     entries are iconed/colored by type). On failure it **unfolds down to each
-     error** and scrolls to the first. A trailing Python **traceback** is shown
-     as its own foldable block (the exception line stays red). Entry **locations
-     are clickable links** (double-click opens the repo script). Any node is
-     **copyable** (Ctrl/Cmd+C or right-click). Failure **screenshots**
-     (`failed_*.png`, from the configured *Screenshots directory* or the
-     `failedImages/` folders) appear as image nodes you can double-click to open.
+     entries are iconed/colored by type). Reports **accumulate across runs**; a
+     **trash** button clears the pane and **right-click → Remove report** drops a
+     single test. On failure it **unfolds down to each error** and scrolls to the
+     first. A trailing Python **traceback** is shown as its own foldable block
+     (the exception line stays red; frame lines are full-contrast and clickable
+     when they carry a file:line). Entry **locations are clickable links**
+     (double-click opens the repo script). Any node is **copyable** (Ctrl/Cmd+C or
+     right-click). Failure **screenshots** (`failed_*.png`) are copied out of the
+     temp report dir into a kept temp store (AppData/Temp), cleared at the start of
+     each run, and shown as image nodes you can double-click to open.
 
 ## Creating suites and tests
 

@@ -22,12 +22,13 @@ object SquishConsoleColors {
     private val PASS = ct("PYSQUISH_PASS", JBColor(0x1A8F3C, 0x5FAD5F), bold = true)
     private val INFO = ct("PYSQUISH_INFO", JBColor(0x2A6FDB, 0x6897BB))
     private val LOG = ct("PYSQUISH_LOG", JBColor(0x7A7A7A, 0x999999))
+    private val WARNING = ct("PYSQUISH_WARNING", JBColor(0xA68A00, 0xE6D24A))
 
     fun contentType(level: SquishLogLevel): ConsoleViewContentType = when (level) {
         SquishLogLevel.PASS -> PASS
         SquishLogLevel.INFO -> INFO
         SquishLogLevel.LOG, SquishLogLevel.TRACEBACK -> LOG
-        SquishLogLevel.WARNING -> ConsoleViewContentType.LOG_WARNING_OUTPUT
+        SquishLogLevel.WARNING -> WARNING
         SquishLogLevel.ERROR,
         SquishLogLevel.FAIL,
         SquishLogLevel.FATAL -> ConsoleViewContentType.ERROR_OUTPUT

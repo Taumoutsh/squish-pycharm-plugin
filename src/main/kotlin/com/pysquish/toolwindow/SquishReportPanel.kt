@@ -20,12 +20,14 @@ import com.pysquish.report.SquishVerdict
 import com.pysquish.execution.SquishScriptLocator
 import com.pysquish.report.SquishXmlReportParser.TRACEBACK_MARKER
 import java.awt.BorderLayout
+import java.awt.FlowLayout
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.AbstractAction
+import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JMenuItem
 import javax.swing.JPanel
@@ -53,9 +55,29 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
         border = JBUI.Borders.empty(8)
     }
 
+    /** Invoked by the trash button to clear every accumulated report. */
+    var onClear: (() -> Unit)? = null
+
+    /** Invoked (right-click → Remove) to drop a single test's report. */
+    var onRemoveReport: ((SquishTestReport) -> Unit)? = null
+
+    private val clearButton = JButton(AllIcons.Actions.GC).apply {
+        toolTipText = "Clear all reports"
+        isFocusable = false
+        margin = JBUI.insets(2)
+        addActionListener { onClear?.invoke() }
+    }
+
     init {
-        add(emptyLabel, BorderLayout.NORTH)
+        add(
+            JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2)).apply {
+                isOpaque = false
+                add(clearButton)
+            },
+            BorderLayout.NORTH,
+        )
         add(JBScrollPane(tree), BorderLayout.CENTER)
+        add(emptyLabel, BorderLayout.SOUTH)
         installCopyAction()
         installMouseActions()
     }
@@ -153,6 +175,9 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
         if (row >= 0 && (selectedRows == null || row !in selectedRows)) tree.setSelectionRow(row)
         JPopupMenu().apply {
             add(JMenuItem("Copy").apply { addActionListener { copySelection() } })
+            selectedTestReport()?.let { report ->
+                add(JMenuItem("Remove report").apply { addActionListener { onRemoveReport?.invoke(report) } })
+            }
             selectedImagePath()?.let {
                 add(JMenuItem("Open Image").apply { addActionListener { openSelectedImage() } })
             }
@@ -184,6 +209,9 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun selectedImagePath(): java.nio.file.Path? =
         ((tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject as? SquishReportNode.Image)?.path
+
+    private fun selectedTestReport(): SquishTestReport? =
+        (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject as? SquishTestReport
 
     private fun openSelectedImage(): Boolean {
         val path = selectedImagePath() ?: return false
@@ -233,7 +261,13 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
                 }
                 is SquishReportNode.Entry -> {
                     if (obj.level == SquishLogLevel.TRACEBACK) {
-                        append(obj.message, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                        // Full-contrast text; blue link when the frame has a file:line.
+                        val clickable = SquishScriptLocator.parse(obj.message) != null
+                        append(
+                            obj.message,
+                            if (clickable) SimpleTextAttributes.LINK_ATTRIBUTES
+                            else SimpleTextAttributes.REGULAR_ATTRIBUTES,
+                        )
                     } else {
                         icon = iconFor(obj.level)
                         append("${obj.level}: ", attributesFor(obj.level))

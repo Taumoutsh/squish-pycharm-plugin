@@ -13,11 +13,13 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.ui.InputValidator
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
@@ -66,6 +68,7 @@ class SquishToolWindowPanel(private val project: Project) :
     private val runner = SquishTestRunner(project, console)
 
     private val reportPanel = SquishReportPanel(project)
+    private val tabs = JBTabbedPane()
 
     private val suiteCombo = JComboBox<SquishSuite>()
     private val testListPanel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
@@ -93,8 +96,8 @@ class SquishToolWindowPanel(private val project: Project) :
     private val runQueue = ArrayDeque<SquishTest>()
     private var queueSuite: SquishSuite? = null
 
-    /** Reports accumulated across a "Run Checked" batch, shown together like a suite run. */
-    private val batchReports = mutableListOf<com.pysquish.report.SquishTestReport>()
+    /** Every test report shown in the Report tab; accumulates across runs until cleared. */
+    private val accumulatedReports = mutableListOf<com.pysquish.report.SquishTestReport>()
 
     /** True until the first test of a batch launches, so the console is cleared only once. */
     private var batchFirst = false
@@ -104,6 +107,7 @@ class SquishToolWindowPanel(private val project: Project) :
     private val showPass = JCheckBox("Pass", true)
     private val showWarning = JCheckBox("Warning", true)
     private val showError = JCheckBox("Error/Fail", true)
+    private val showOther = JCheckBox("Other", true)
 
     /** Last verdict per test, keyed by test directory. Session-only. */
     private val verdicts = HashMap<Path, SquishVerdict>()
@@ -123,6 +127,14 @@ class SquishToolWindowPanel(private val project: Project) :
             }
         }
         runner.reportListener = { report -> onReport(report) }
+        reportPanel.onClear = {
+            accumulatedReports.clear()
+            renderReports()
+        }
+        reportPanel.onRemoveReport = { report ->
+            accumulatedReports.removeIf { it === report }
+            renderReports()
+        }
 
         suiteCombo.addActionListener { rebuildTestList() }
         suiteCombo.renderer = SuiteRenderer()
@@ -210,7 +222,7 @@ class SquishToolWindowPanel(private val project: Project) :
             preferredSize = Dimension(320, preferredSize.height)
         }
 
-        val tabs = JBTabbedPane().apply {
+        tabs.apply {
             addTab("Console", createConsolePanel())
             addTab("Report", reportPanel.component())
         }
@@ -226,7 +238,7 @@ class SquishToolWindowPanel(private val project: Project) :
     private fun createConsolePanel(): JPanel {
         val filterBar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
             add(JBLabel("Show:"))
-            listOf(showLog, showPass, showWarning, showError).forEach { cb ->
+            listOf(showLog, showPass, showWarning, showError, showOther).forEach { cb ->
                 cb.addActionListener { applyConsoleFilter() }
                 add(cb)
             }
@@ -243,6 +255,7 @@ class SquishToolWindowPanel(private val project: Project) :
             if (showPass.isSelected) addAll(SquishConsole.PASS_GROUP)
             if (showWarning.isSelected) addAll(SquishConsole.WARNING_GROUP)
             if (showError.isSelected) addAll(SquishConsole.ERROR_GROUP)
+            if (showOther.isSelected) addAll(SquishConsole.OTHER_GROUP)
         }
         console.setVisibleLevels(levels)
     }
@@ -255,14 +268,15 @@ class SquishToolWindowPanel(private val project: Project) :
         clearConsole: Boolean = true,
     ) {
         lastRunSuite = suite
+        // Persist editor edits so squishrunner executes the latest scripts.
+        FileDocumentManager.getInstance().saveAllDocuments()
+        tabs.selectedIndex = 0 // show the live console while running
         runner.run(suite, test, debug, clearConsole)
     }
 
     private fun onReport(report: SquishRunReport?) {
-        // During a "Run Checked" batch the queue is still active here (this fires
-        // before runNextInQueue), so accumulate every test's report and show them
-        // together, like a whole-suite run.
-        val inBatch = queueSuite != null
+        // Reports accumulate across runs (single test, whole suite, or batch) and
+        // are only removed via the Report tab's trash / right-click controls.
         if (report != null) {
             val suite = lastRunSuite
             report.tests.forEach { tr ->
@@ -272,15 +286,15 @@ class SquishToolWindowPanel(private val project: Project) :
                     if (tr.verdict == SquishVerdict.FAIL) attachScreenshots(tr, test, suite)
                 }
             }
+            accumulatedReports.addAll(report.tests)
         }
-        val displayed = if (inBatch) {
-            report?.tests?.let { batchReports.addAll(it) }
-            SquishRunReport(batchReports.toList())
-        } else {
-            report
-        }
-        reportPanel.setReport(displayed)
+        renderReports()
         rebuildTestList()
+    }
+
+    private fun renderReports() {
+        val model = if (accumulatedReports.isEmpty()) null else SquishRunReport(accumulatedReports.toList())
+        reportPanel.setReport(model)
     }
 
     /**
@@ -296,12 +310,15 @@ class SquishToolWindowPanel(private val project: Project) :
         val pattern = Regex("failed_.*\\.png", RegexOption.IGNORE_CASE)
         val configured = SquishSettings.state().screenshotsDir?.trim().orEmpty()
 
-        val all = if (configured.isNotEmpty()) {
-            walkImages(Path.of(configured), pattern)
-        } else {
+        // Primary source is the kept temp store (screenshots copied out of the
+        // report dir before it is deleted); the configured dir and the repo
+        // failedImages/ folders are additional fallbacks.
+        val all = buildList {
+            if (configured.isNotEmpty()) addAll(walkImages(Path.of(configured), pattern))
+            addAll(walkImages(SquishTestRunner.screenshotsDir(), pattern))
             listOf(test.directory, suite.directory)
                 .map { it.resolve("failedImages") }
-                .flatMap { walkImages(it, pattern) }
+                .forEach { addAll(walkImages(it, pattern)) }
         }.distinct()
 
         // Prefer images whose path mentions this test; otherwise attach all found.
@@ -449,6 +466,8 @@ class SquishToolWindowPanel(private val project: Project) :
             toolTipText = tip
             margin = JBUI.insets(0)
             isFocusable = false
+            // Explicit greyed icon so the disabled state (during a run) is visible.
+            disabledIcon = IconLoader.getDisabledIcon(icon)
             preferredSize = Dimension(JBUI.scale(28), JBUI.scale(28))
             addActionListener { action() }
         }
@@ -478,7 +497,6 @@ class SquishToolWindowPanel(private val project: Project) :
         runQueue.clear()
         runQueue.addAll(checked)
         queueSuite = suite
-        batchReports.clear()
         batchFirst = true
         runNextInQueue()
     }

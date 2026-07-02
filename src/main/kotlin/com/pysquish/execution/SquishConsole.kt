@@ -44,7 +44,8 @@ class SquishConsole(project: Project) : Disposable {
 
     fun printError(text: String) = add(text, SquishLogLevel.ERROR, ConsoleViewContentType.ERROR_OUTPUT)
 
-    fun printWarning(text: String) = add(text, SquishLogLevel.WARNING, ConsoleViewContentType.LOG_WARNING_OUTPUT)
+    fun printWarning(text: String) =
+        add(text, SquishLogLevel.WARNING, SquishConsoleColors.contentType(SquishLogLevel.WARNING))
 
     fun printClassified(text: String, level: SquishLogLevel, content: ConsoleViewContentType) =
         add(text, level, content)
@@ -69,15 +70,16 @@ class SquishConsole(project: Project) : Disposable {
     override fun dispose() {}
 
     companion object {
-        /** LOG-level group covers info/traceback/unknown "informational" lines. */
-        val LOG_GROUP = setOf(
-            SquishLogLevel.LOG, SquishLogLevel.INFO,
-            SquishLogLevel.TRACEBACK, SquishLogLevel.UNKNOWN,
-        )
+        /** LOG-level group covers info/traceback "informational" lines. */
+        val LOG_GROUP = setOf(SquishLogLevel.LOG, SquishLogLevel.INFO, SquishLogLevel.TRACEBACK)
         val PASS_GROUP = setOf(SquishLogLevel.PASS)
         val WARNING_GROUP = setOf(SquishLogLevel.WARNING)
         val ERROR_GROUP = setOf(SquishLogLevel.ERROR, SquishLogLevel.FAIL, SquishLogLevel.FATAL)
 
-        val ALL_LEVELS: Set<SquishLogLevel> = LOG_GROUP + PASS_GROUP + WARNING_GROUP + ERROR_GROUP
+        /** Lines that matched no known level (the "Other" filter). */
+        val OTHER_GROUP = setOf(SquishLogLevel.UNKNOWN)
+
+        val ALL_LEVELS: Set<SquishLogLevel> =
+            LOG_GROUP + PASS_GROUP + WARNING_GROUP + ERROR_GROUP + OTHER_GROUP
     }
 }
