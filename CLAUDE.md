@@ -6,6 +6,13 @@ opened project, lets you pick a suite and run any test case from a tool window,
 streams `squishrunner` output into a log console, and can attach the PyCharm
 Python debugger to the running test so breakpoints are honored.
 
+## Development workflow
+
+Push changes **directly to `main`** — that is the working convention for this
+repo. Avoid throwaway feature branches: the assistant's git relay can create and
+update branches but **cannot delete remote branches or push tags**, so any branch
+it creates lingers and release tags must be pushed from a developer machine.
+
 ## Status
 
 v0.3.0 — adds **suite / test scaffolding**: a **+ Add a suite…** button (next to

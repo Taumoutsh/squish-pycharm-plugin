@@ -19,9 +19,10 @@ class SquishLocationFilter(private val project: Project) : Filter {
         val lineStart = entireLength - line.length
         val items = ArrayList<Filter.ResultItem>()
         for (m in matches) {
-            val fileName = m.groupValues[1].substringAfterLast('/').substringAfterLast('\\')
-            val lineNo = m.groupValues.getOrNull(2)?.toIntOrNull() ?: 1
-            val vf = SquishScriptLocator.findInProject(project, fileName) ?: continue
+            val rawPath = m.groupValues[1]
+            val fileName = rawPath.substringAfterLast('/').substringAfterLast('\\')
+            val lineNo = SquishScriptLocator.lineFrom(m.groupValues.getOrNull(2), line)
+            val vf = SquishScriptLocator.findInProject(project, fileName, rawPath) ?: continue
             val info = OpenFileHyperlinkInfo(project, vf, (lineNo - 1).coerceAtLeast(0))
             items.add(Filter.ResultItem(lineStart + m.range.first, lineStart + m.range.last + 1, info))
         }

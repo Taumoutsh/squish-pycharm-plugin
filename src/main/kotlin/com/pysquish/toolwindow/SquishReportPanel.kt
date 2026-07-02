@@ -196,7 +196,7 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
         val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return false
         val entry = node.userObject as? SquishReportNode.Entry ?: return false
         val loc = SquishScriptLocator.parse(entry.detail) ?: SquishScriptLocator.parse(entry.message) ?: return false
-        val vf = SquishScriptLocator.findInProject(project, loc.fileName) ?: return false
+        val vf = SquishScriptLocator.findInProject(project, loc.fileName, loc.relPath) ?: return false
         return runCatching {
             OpenFileDescriptor(project, vf, (loc.line - 1).coerceAtLeast(0), 0).navigate(true); true
         }.getOrDefault(false)
