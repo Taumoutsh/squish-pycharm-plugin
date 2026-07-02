@@ -1,52 +1,37 @@
 package com.pysquish.execution
 
 /**
- * Tracks Squish `startSection`/`endSection` markers seen in the console stream and
- * produces an abbreviated `P<phase>-S<step>` tag.
+ * Derives the console `P<phase>-S<step>` tag from explicit Squish log markers.
  *
- * The first nesting level is the **phase**, the second is the **step**:
- * - a top-level `startSection` increments the phase and resets the step;
- * - a `startSection` nested one deeper increments the step.
- *
- * [prefixFor] returns the tag for the current line, or `null` when we are outside
- * any section (so nothing is shown, per the requirement).
+ * A line whose content matches `Start Section: Phase <p>, Step <s>` sets the
+ * current phase and step; every subsequent line is tagged with the latest
+ * values, until the next such marker. Nothing is shown before the first marker.
+ * Section nesting/depth is deliberately **not** used.
  */
 class SquishSectionTracker {
 
-    private var depth = 0
-    private var phase = 0
-    private var step = 0
+    private var phase: Int? = null
+    private var step: Int? = null
 
-    private val startRegex = Regex("start\\s*section", RegexOption.IGNORE_CASE)
-    private val endRegex = Regex("end\\s*section", RegexOption.IGNORE_CASE)
+    // "... Start Section: Phase 2, Step 3 ..." — case-insensitive, flexible
+    // separators between the keywords and their numbers.
+    private val markerRegex = Regex(
+        "start\\s*section\\b[^\\n]*?phase\\s*(\\d+)[^\\n]*?step\\s*(\\d+)",
+        RegexOption.IGNORE_CASE,
+    )
 
     fun prefixFor(line: String): String? {
-        val isStart = startRegex.containsMatchIn(line)
-        val isEnd = !isStart && endRegex.containsMatchIn(line)
-
-        if (isStart) {
-            depth++
-            when {
-                depth == 1 -> { phase++; step = 0 }   // new phase resets the step counter
-                depth == 2 -> step++                  // steps are numbered cumulatively within a phase
-            }
+        markerRegex.find(line)?.let { match ->
+            match.groupValues[1].toIntOrNull()?.let { phase = it }
+            match.groupValues[2].toIntOrNull()?.let { step = it }
         }
-
-        // Tag reflects the section the current line belongs to (computed before an
-        // endSection pops the level). The step is only shown while inside a step
-        // (depth >= 2); at phase level we show just "P<phase>"; outside, nothing.
-        val tag = when {
-            depth == 0 -> null
-            depth == 1 -> "P$phase"
-            else -> "P$phase-S$step"
-        }
-
-        if (isEnd && depth > 0) depth--
-
-        return tag
+        val p = phase ?: return null
+        val s = step ?: return "P$p"
+        return "P$p-S$s"
     }
 
     fun reset() {
-        depth = 0; phase = 0; step = 0
+        phase = null
+        step = null
     }
 }

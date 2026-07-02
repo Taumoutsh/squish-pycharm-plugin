@@ -7,25 +7,22 @@ import org.junit.jupiter.api.Test
 class SquishSectionTrackerTest {
 
     @Test
-    fun `no prefix before any section`() {
+    fun `no prefix before any marker`() {
         val t = SquishSectionTracker()
         assertNull(t.prefixFor("10:00:00 LOG hello"))
     }
 
     @Test
-    fun `top-level section is a phase, nested is a step`() {
+    fun `phase and step come from the Start Section marker and persist`() {
         val t = SquishSectionTracker()
-        assertEquals("P1", t.prefixFor("10:00:00 LOG startSection Phase one"))
-        assertEquals("P1", t.prefixFor("10:00:01 LOG doing something"))
-        assertEquals("P1-S1", t.prefixFor("10:00:02 LOG startSection Step A"))
-        assertEquals("P1-S1", t.prefixFor("10:00:03 PASS ok"))
-        assertEquals("P1-S1", t.prefixFor("10:00:04 LOG endSection"))
-        assertEquals("P1-S2", t.prefixFor("10:00:05 LOG startSection Step B"))
-        assertEquals("P1-S2", t.prefixFor("10:00:06 LOG endSection"))
-        assertEquals("P1", t.prefixFor("10:00:07 LOG endSection"))
-        // Next top-level section starts phase 2, step counter resets.
-        assertEquals("P2", t.prefixFor("10:00:08 LOG startSection Phase two"))
-        assertEquals("P2-S1", t.prefixFor("10:00:09 LOG startSection Step A"))
+        assertEquals("P1-S2", t.prefixFor("10:00:00 LOG Start Section: Phase 1, Step 2"))
+        // Lines without a marker keep the latest phase/step.
+        assertEquals("P1-S2", t.prefixFor("10:00:01 LOG doing something"))
+        assertEquals("P1-S2", t.prefixFor("10:00:02 PASS ok"))
+        // A new marker updates both values (any numbers, no depth logic).
+        assertEquals("P2-S1", t.prefixFor("10:00:03 LOG Start Section: Phase 2, Step 1"))
+        assertEquals("P2-S1", t.prefixFor("10:00:04 LOG still in phase 2 step 1"))
+        assertEquals("P3-S5", t.prefixFor("10:00:05 LOG Start Section: Phase 3, Step 5"))
     }
 
     @Test

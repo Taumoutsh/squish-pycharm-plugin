@@ -45,6 +45,8 @@ import javax.swing.Icon
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JCheckBox
@@ -75,6 +77,14 @@ class SquishToolWindowPanel(private val project: Project) :
         compactButton(AllIcons.Actions.NewFolder, "Add a suite… (new suite_<name> folder)") { onAddSuite() }
     private val addTestButton =
         compactButton(AllIcons.Actions.AddFile, "Add a test… (new tst_<name> in the selected suite)") { onAddTest() }
+
+    // Toggles every test's checkbox on/off; label reflects the current state.
+    private val selectAllButton = JButton("Select all").apply {
+        toolTipText = "Select or unselect all tests"
+        isFocusable = false
+        margin = JBUI.insets(2, 6)
+        addActionListener { toggleSelectAll() }
+    }
 
     /** Whether each test's checkbox is ticked, keyed by test directory (default true). */
     private val checkedState = HashMap<Path, Boolean>()
@@ -179,7 +189,18 @@ class SquishToolWindowPanel(private val project: Project) :
                 add(addTestButton)
             }
             top.add(addButtons, BorderLayout.EAST)
-            add(top, BorderLayout.NORTH)
+
+            val listHeader = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+                isOpaque = false
+                add(selectAllButton)
+            }
+            add(
+                JPanel(BorderLayout()).apply {
+                    add(top, BorderLayout.NORTH)
+                    add(listHeader, BorderLayout.SOUTH)
+                },
+                BorderLayout.NORTH,
+            )
 
             val scroll = JBScrollPane(testListPanel)
             scroll.border = JBUI.Borders.emptyTop(6)
@@ -381,12 +402,18 @@ class SquishToolWindowPanel(private val project: Project) :
 
             val name = JBLabel(test.name).apply {
                 icon = statusIcon(test)
-                toolTipText = when (verdicts[test.directory]) {
-                    SquishVerdict.PASS -> "Last result: OK"
-                    SquishVerdict.FAIL -> "Last result: KO"
-                    else -> test.scriptFile?.toString() ?: "No test script found"
+                toolTipText = when {
+                    test.scriptFile == null -> "No test script found"
+                    verdicts[test.directory] == SquishVerdict.PASS -> "Last result: OK — double-click to open"
+                    verdicts[test.directory] == SquishVerdict.FAIL -> "Last result: KO — double-click to open"
+                    else -> "Double-click to open ${test.scriptFile?.fileName}"
                 }
                 if (test.scriptFile == null) foreground = JBUI.CurrentTheme.Label.disabledForeground()
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) {
+                        if (e.clickCount == 2) openTestScript(test)
+                    }
+                })
             }
             row.add(name, BorderLayout.CENTER)
 
@@ -428,6 +455,20 @@ class SquishToolWindowPanel(private val project: Project) :
 
     private fun isChecked(test: SquishTest): Boolean = checkedState.getOrDefault(test.directory, true)
 
+    /** Selects all tests, or unselects them if they are already all selected. */
+    private fun toggleSelectAll() {
+        val suite = selectedSuite() ?: return
+        val newState = !suite.tests.all { isChecked(it) }
+        suite.tests.forEach { checkedState[it.directory] = newState }
+        rebuildTestList()
+    }
+
+    /** Opens the test's script in the editor (the project's copy). */
+    private fun openTestScript(test: SquishTest) {
+        val script = test.scriptFile ?: return
+        openInEditor(script)
+    }
+
     /** Queues every checked, runnable test in the selected suite and runs them in order. */
     private fun runChecked() {
         val suite = selectedSuite() ?: return
@@ -462,6 +503,12 @@ class SquishToolWindowPanel(private val project: Project) :
         suiteCombo.isEnabled = !running
         addSuiteButton.isEnabled = !running
         addTestButton.isEnabled = !running && selectedSuite() != null
+
+        val suite = selectedSuite()
+        val hasTests = suite != null && suite.tests.isNotEmpty()
+        selectAllButton.isEnabled = hasTests && !running
+        selectAllButton.text =
+            if (hasTests && suite!!.tests.all { isChecked(it) }) "Unselect all" else "Select all"
     }
 
     // --- Scaffolding new suites / tests --------------------------------------

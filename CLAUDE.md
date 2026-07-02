@@ -129,18 +129,21 @@ set) so accented characters (é, è, …) render correctly.
 3. It scans for suites automatically; the toolbar **Refresh** rescans.
 4. Pick a suite in the combo box. Each test row has a **checkbox** (ticked by
    default) at the start, the test name with its last verdict — green ✓ (OK) or
-   red ✗ (KO), session-only — and compact **Run** / **Debug** buttons. The
-   toolbar has **Run Whole Suite**, **Run Checked** (runs every ticked test one
-   after another), **Stop**, and a **Settings** shortcut.
+   red ✗ (KO), grey when not yet run (so titles stay aligned), session-only — and
+   compact **Run** / **Debug** buttons. **Double-click a test** to open its script
+   in the editor. A **Select all / Unselect all** button above the list toggles
+   every checkbox. The toolbar has **Run Whole Suite**, **Run Checked** (runs
+   every ticked test one after another), **Stop**, and a **Settings** shortcut.
 5. The right side has two tabs:
    - **Console** — live `squishrunner` output, colored by level (`PASS` green,
      `FAIL`/`ERROR` red, `WARNING` orange, `INFO` blue, `LOG` grey). A **Show:**
      filter bar (Log / Pass / Warning / Error·Fail) toggles which levels are visible.
-     Each line derived from Squish `startSection` traces is tagged `P<phase>-S<step>`
-     (abbreviated, between the timestamp and the log type; nothing when outside a
-     section). Script **locations are clickable** and open the matching script in
-     the project (resolved by file name, so the repo copy — not the absolute log
-     path — is opened).
+     Lines are tagged `P<phase>-S<step>` (between the timestamp and the log type):
+     a log line containing `Start Section: Phase X, Step X` sets the current phase
+     and step, and every following line carries the latest values until the next
+     such marker (nothing before the first). Script **locations are clickable** and
+     open the matching script in the project (resolved by file name, so the repo
+     copy — not the absolute log path — is opened).
    - **Report** — a foldable tree parsed from the Squish `xml3.4` report
      (`<test type="section">` become collapsible layers, nested to any depth;
      entries are iconed/colored by type). On failure it **unfolds down to each
