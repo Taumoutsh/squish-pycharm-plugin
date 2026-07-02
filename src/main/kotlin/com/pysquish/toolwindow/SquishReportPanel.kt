@@ -19,7 +19,6 @@ import com.pysquish.report.SquishTestReport
 import com.pysquish.report.SquishVerdict
 import com.pysquish.report.SquishXmlReportParser.TRACEBACK_MARKER
 import java.awt.BorderLayout
-import java.awt.Font
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.awt.event.KeyEvent
@@ -222,7 +221,6 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
                 }
                 is SquishReportNode.Entry -> {
                     if (obj.level == SquishLogLevel.TRACEBACK) {
-                        font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
                         append(obj.message, SimpleTextAttributes.GRAYED_ATTRIBUTES)
                     } else {
                         icon = iconFor(obj.level)
