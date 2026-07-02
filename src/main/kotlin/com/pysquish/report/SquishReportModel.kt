@@ -83,7 +83,10 @@ data class SquishTestReport(
     val name: String,
     val verdict: SquishVerdict,
     val root: SquishReportNode.Section,
-)
+) {
+    /** When this report was produced by a run (set by the UI, not the parser). */
+    var generatedAt: String? = null
+}
 
 /** The whole run: every test case found in the report, in document order. */
 data class SquishRunReport(

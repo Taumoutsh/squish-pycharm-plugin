@@ -15,6 +15,19 @@ it creates lingers and release tags must be pushed from a developer machine.
 
 ## Status
 
+v1.0.0 — **Run Whole Suite** now runs **one `squishrunner` command per test**
+(like Run Checked), so the Report tab and OK/KO badges update after each test.
+Report tab gains a **per-report "generated at" timestamp**, **Delete**-key removal
+(right-click / trash still work), and **preserves fold state** after a removal
+instead of re-unfolding. Fixed run/debug buttons getting **stuck disabled** (run
+teardown now always resets state) and the **write-intent** error when the row
+Run/Debug buttons saved documents. **Failure screenshots** now live in a single
+active directory — the **custom Screenshots directory** when set, else the temp
+`pysquish-screenshots` store — read **live** (settings apply without a restart),
+accumulating with the report and cleared at startup, on **Clear**, and on stop.
+All path settings (squishrunner/squishserver exe, mustache template, screenshots,
+debug paths) are read live, so **Apply** takes effect immediately.
+
 v0.4.0 — Report tab **accumulates across runs** (trash button clears it,
 right-click removes one test); failure **screenshots** are copied out of the temp
 report dir into a kept AppData/Temp store (cleared per run) so they survive;
@@ -122,12 +135,13 @@ persisted application-wide in `pysquish.xml`):
 - **Report generator (XML)** — the Squish XML generator PySquish adds for the
   Report tab / verdicts (default `xml3.4`). Must be one your `squishrunner`
   supports; use a native XML format (not `xmljunit`) so sections are preserved.
-- **Screenshots directory** — optional extra place to look for failure
-  screenshots (`failed_*.png`, searched recursively). By default PySquish copies
-  screenshots out of the temp `xml3.4` report dir (before that dir is deleted)
-  into a kept temp store under AppData/Temp, cleared at the start of each run —
-  so they survive for the Report tab. This setting and the suite/test
-  `failedImages/` folders are additional fallbacks.
+- **Screenshots directory** — where failure screenshots (`failed_*.png`) are
+  saved and read from. PySquish copies them out of the temp `xml3.4` report dir
+  (before that dir is deleted) into a single **active** directory: this custom
+  path when set, otherwise a temp `pysquish-screenshots` store. The setting is
+  read live, so changing it takes effect on the next run (no IDE restart). The
+  images accumulate with the (accumulating) Report tab and are removed at
+  tool-window startup, on the Report tab's **Clear**, and when the plugin stops.
 - **Test script template (.mustache)** — the Mustache template used by
   **+ Add a test…**. Blank = the bundled
   [templates/test.py.mustache](src/main/resources/templates/test.py.mustache).

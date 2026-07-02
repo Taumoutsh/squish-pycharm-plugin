@@ -11,6 +11,7 @@ import com.intellij.openapi.project.Project
 import com.pysquish.debug.SquishDebugSupport
 import com.pysquish.model.SquishSuite
 import com.pysquish.model.SquishTest
+import com.pysquish.settings.SquishSettings
 import com.pysquish.report.SquishRunReport
 import com.pysquish.report.SquishXmlReportParser
 import java.nio.file.Files
@@ -60,12 +61,10 @@ class SquishTestRunner(
             return
         }
 
-        if (clearConsole) {
-            console.clearAll()
-            // A fresh launch (single run, or the first test of a batch) starts with
-            // an empty screenshots store; batch tests then accumulate into it.
-            resetScreenshots()
-        }
+        // Screenshots accumulate with the (accumulating) report; they are cleared
+        // at tool-window startup, on the Report tab's Clear, and on dispose — not
+        // per run.
+        if (clearConsole) console.clearAll()
         notifyState(true)
         debugActive = debug
 
@@ -128,39 +127,41 @@ class SquishTestRunner(
         handler.addProcessListener(SquishConsolePrinter(console))
         handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
-                console.printSystem("\nSquish runner finished with exit code ${event.exitCode}\n")
-                stopServer()
-                if (debugActive) SquishDebugSupport.stopDebugServer(project)
-                cleanupDebugBootstrap()
+                try {
+                    console.printSystem("\nSquish runner finished with exit code ${event.exitCode}\n")
+                    stopServer()
+                    if (debugActive) SquishDebugSupport.stopDebugServer(project)
+                    cleanupDebugBootstrap()
 
-                val report = reportDir?.let { SquishXmlReportParser.parse(it) }
-                // Squish bundles failure screenshots under the report dir; keep them
-                // before the dir is deleted so the Report tab can still show them.
-                reportDir?.let { copyScreenshotsOut(it) }
-                cleanupReportDir()
-                ApplicationManager.getApplication().invokeLater { reportListener?.invoke(report) }
-
-                activeRunner.set(null)
-                notifyState(false)
+                    val report = reportDir?.let { SquishXmlReportParser.parse(it) }
+                    // Squish bundles failure screenshots under the report dir; keep them
+                    // before the dir is deleted so the Report tab can still show them.
+                    reportDir?.let { copyScreenshotsOut(it) }
+                    cleanupReportDir()
+                    ApplicationManager.getApplication().invokeLater { reportListener?.invoke(report) }
+                } catch (t: Throwable) {
+                    LOG.warn("Error during Squish run teardown", t)
+                } finally {
+                    // Always clear the running state so the UI re-enables the run/debug
+                    // buttons, even if teardown above failed (otherwise they stay greyed).
+                    activeRunner.set(null)
+                    notifyState(false)
+                }
             }
         })
         activeRunner.set(handler)
         handler.startNotify()
     }
 
-    /** Empties the kept screenshots store at the start of a fresh launch. */
-    private fun resetScreenshots() {
-        deleteRecursively(SCREENSHOTS_DIR)
-        runCatching { Files.createDirectories(SCREENSHOTS_DIR) }
-    }
-
-    /** Copies `failed_*.png` out of [fromReportDir] into the kept screenshots store. */
+    /** Copies `failed_*.png` out of [fromReportDir] into the active screenshots dir. */
     private fun copyScreenshotsOut(fromReportDir: Path) {
+        val dest = screenshotsDir()
         runCatching {
+            Files.createDirectories(dest)
             Files.walk(fromReportDir).use { stream ->
                 stream.filter { Files.isRegularFile(it) && FAILED_PNG.matches(it.fileName.toString()) }
                     .forEach { src ->
-                        val dst = SCREENSHOTS_DIR.resolve(fromReportDir.relativize(src).toString())
+                        val dst = dest.resolve(fromReportDir.relativize(src).toString())
                         runCatching {
                             Files.createDirectories(dst.parent)
                             Files.copy(src, dst, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
@@ -201,17 +202,39 @@ class SquishTestRunner(
     }
 
     companion object {
-        /**
-         * Persistent temp dir (under AppData/Temp) where failure screenshots are
-         * kept for the Report tab. Cleared at the start of each fresh launch, not
-         * when a run ends, so screenshots stay viewable afterwards.
-         */
-        private val SCREENSHOTS_DIR: Path =
+        /** Temp store (under AppData/Temp) used when no custom directory is set. */
+        private val TEMP_SCREENSHOTS_DIR: Path =
             Path.of(System.getProperty("java.io.tmpdir"), "pysquish-screenshots")
 
         private val FAILED_PNG = Regex("failed_.*\\.png", RegexOption.IGNORE_CASE)
 
-        /** Directory the Report tab reads failure screenshots from when unset in settings. */
-        fun screenshotsDir(): Path = SCREENSHOTS_DIR
+        /**
+         * Where failure screenshots are saved to / read from: the **custom
+         * Screenshots directory** from settings when set, otherwise the temp
+         * store. Read live so a settings change takes effect on the next run
+         * without an IDE restart.
+         */
+        fun screenshotsDir(): Path {
+            val custom = SquishSettings.state().screenshotsDir?.trim().orEmpty()
+            if (custom.isNotEmpty()) runCatching { Path.of(custom) }.getOrNull()?.let { return it }
+            return TEMP_SCREENSHOTS_DIR
+        }
+
+        /** Deletes the failure images (`failed_*.png`) from the temp store and the custom dir. */
+        fun clearScreenshots() {
+            deleteFailedImages(TEMP_SCREENSHOTS_DIR)
+            val custom = SquishSettings.state().screenshotsDir?.trim().orEmpty()
+            if (custom.isNotEmpty()) runCatching { Path.of(custom) }.getOrNull()?.let { deleteFailedImages(it) }
+        }
+
+        private fun deleteFailedImages(dir: Path) {
+            if (!Files.isDirectory(dir)) return
+            runCatching {
+                Files.walk(dir).use { stream ->
+                    stream.filter { Files.isRegularFile(it) && FAILED_PNG.matches(it.fileName.toString()) }
+                        .forEach { runCatching { Files.deleteIfExists(it) } }
+                }
+            }
+        }
     }
 }

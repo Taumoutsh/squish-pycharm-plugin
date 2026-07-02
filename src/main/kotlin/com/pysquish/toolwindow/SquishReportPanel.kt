@@ -79,11 +79,19 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
         add(JBScrollPane(tree), BorderLayout.CENTER)
         add(emptyLabel, BorderLayout.SOUTH)
         installCopyAction()
+        installRemoveAction()
         installMouseActions()
     }
 
-    /** Rebuilds the tree from [report]; pass null to clear. */
-    fun setReport(report: SquishRunReport?) {
+    /**
+     * Rebuilds the tree from [report]; pass null to clear. Each report node shows
+     * its own "generated at" time. When [autoExpand] is false (e.g. after removing
+     * one report), the previous fold state is restored instead of unfolding to
+     * every failure.
+     */
+    fun setReport(report: SquishRunReport?, autoExpand: Boolean = true) {
+        val previouslyExpanded = if (autoExpand) emptyList() else captureExpandedPaths()
+
         val root = DefaultMutableTreeNode("Report")
         if (report == null || report.tests.isEmpty()) {
             emptyLabel.isVisible = true
@@ -97,7 +105,37 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
             root.add(testNode)
         }
         tree.model = DefaultTreeModel(root)
-        unfoldToFailures(root)
+        if (autoExpand) unfoldToFailures(root) else restoreExpanded(previouslyExpanded, root)
+    }
+
+    /** Captures the currently expanded paths as chains of user objects (identity-comparable). */
+    private fun captureExpandedPaths(): List<List<Any>> {
+        val root = tree.model.root as? DefaultMutableTreeNode ?: return emptyList()
+        val expanded = tree.getExpandedDescendants(TreePath(root)) ?: return emptyList()
+        val result = ArrayList<List<Any>>()
+        while (expanded.hasMoreElements()) {
+            val path = expanded.nextElement()
+            result.add(path.path.mapNotNull { (it as? DefaultMutableTreeNode)?.userObject })
+        }
+        return result
+    }
+
+    /** Re-expands paths whose user-object chain (below the root) still exists after a rebuild. */
+    private fun restoreExpanded(chains: List<List<Any>>, root: DefaultMutableTreeNode) {
+        for (chain in chains) {
+            var node = root
+            val nodes = arrayListOf<DefaultMutableTreeNode>(root)
+            var matched = true
+            for (userObject in chain.drop(1)) {
+                val child = (0 until node.childCount)
+                    .map { node.getChildAt(it) as DefaultMutableTreeNode }
+                    .firstOrNull { it.userObject === userObject }
+                if (child == null) { matched = false; break }
+                node = child
+                nodes.add(node)
+            }
+            if (matched && nodes.size > 1) tree.expandPath(TreePath(nodes.toArray()))
+        }
     }
 
     private fun addChildren(parent: DefaultMutableTreeNode, section: SquishReportNode.Section) {
@@ -156,6 +194,27 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
         tree.actionMap.put("pysquish-copy", object : AbstractAction() {
             override fun actionPerformed(e: java.awt.event.ActionEvent?) = copySelection()
         })
+    }
+
+    private fun installRemoveAction() {
+        val deleteKey = KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0)
+        tree.inputMap.put(deleteKey, "pysquish-remove")
+        tree.inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "pysquish-remove")
+        tree.actionMap.put("pysquish-remove", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                selectedTestReportForRemoval()?.let { onRemoveReport?.invoke(it) }
+            }
+        })
+    }
+
+    /** The report of the selected node, walking up from a child entry/section if needed. */
+    private fun selectedTestReportForRemoval(): SquishTestReport? {
+        var node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode
+        while (node != null) {
+            (node.userObject as? SquishTestReport)?.let { return it }
+            node = node.parent as? DefaultMutableTreeNode
+        }
+        return null
     }
 
     private fun installMouseActions() {
@@ -250,6 +309,9 @@ class SquishReportPanel(private val project: Project) : JPanel(BorderLayout()) {
                         SquishVerdict.UNKNOWN -> AllIcons.RunConfigurations.TestNotRan
                     }
                     append(obj.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    obj.generatedAt?.let {
+                        append("  — generated at $it", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+                    }
                 }
                 is SquishReportNode.Section -> {
                     val isTraceback = obj.title == TRACEBACK_MARKER
